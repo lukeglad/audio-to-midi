@@ -31,6 +31,18 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     topBar.onBpmChanged = [this] (double bpm) { processorRef.setBpm (bpm); };
     topBar.onHalve  = [this] { processorRef.halveTempo(); };
     topBar.onDouble = [this] { processorRef.doubleTempo(); };
+    topBar.onQuantizeChanged = [this] (double amount)
+    {
+        auto settings = processorRef.getCleanup();
+        settings.quantize = amount;
+        processorRef.setCleanup (settings);
+    };
+    topBar.onGridChanged = [this] (atm::Grid grid)
+    {
+        auto settings = processorRef.getCleanup();
+        settings.grid = grid;
+        processorRef.setCleanup (settings);
+    };
     canvas.onAction = [this]
     {
         if (processorRef.getTranscription().isRunning())
@@ -175,10 +187,13 @@ void AudioToMidiEditor::refreshFromProcessor()
     auto& downloader = processorRef.getDownloader();
 
     canvas.setSource (source);
-    canvas.setTranscription (processorRef.getTranscriptionRun(), t.notes);
+    canvas.setNotes (processorRef.getTranscriptionRun(), processorRef.getNotesVersion(), processorRef.getCleanNotes());
 
     const auto& tempo = processorRef.getTempo();
     topBar.setTempo (tempo.hasEstimate && source != nullptr, tempo.bpm);
+
+    topBar.setQuantize (processorRef.getCleanup().quantize, processorRef.getCleanup().grid);
+    canvas.setGridDivisions ((int) processorRef.getCleanup().grid);
     canvas.setGrid (tempo.hasEstimate && source != nullptr ? std::optional (tempo.effective()) : std::nullopt);
     canvas.setLoadStatus (processorRef.getLoadingFileName(), processorRef.getLoadError());
 
@@ -338,9 +353,9 @@ juce::File AudioToMidiEditor::writeLayerMidi (int layerKey, const juce::File& de
     timing.hostBpm = processorRef.getHostBpm();
     timing.conform = tempo.hasEstimate;   // always, once a tempo exists
     timing.tempo   = tempo.effective();
-    timing.earliestOnset = atm::earliestOnsetOf (processorRef.getTranscription().notes);
+    timing.earliestOnset = atm::earliestOnsetOf (processorRef.getCleanNotes());
 
-    const auto midi = atm::buildLayerMidi (processorRef.getTranscription().notes, layerKey, timing);
+    const auto midi = atm::buildLayerMidi (processorRef.getCleanNotes(), layerKey, timing);
     return atm::writeMidiFile (midi, destination) ? destination : juce::File();
 }
 

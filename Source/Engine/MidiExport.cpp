@@ -34,7 +34,7 @@ int ExportTiming::leadInBeats() const noexcept
     return lead;
 }
 
-double earliestOnsetOf (const std::vector<msl::Note>& notes) noexcept
+double earliestOnsetOf (const std::vector<MidiNote>& notes) noexcept
 {
     double earliest = std::numeric_limits<double>::max();
     for (const auto& note : notes)
@@ -50,23 +50,24 @@ double tickFor (double seconds, const ExportTiming& timing)
     return seconds * kTicksPerQuarter * juce::jlimit (20.0, 999.0, timing.hostBpm) / 60.0;
 }
 
-juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layerKey, const ExportTiming& timing)
+juce::MidiFile buildLayerMidi (const std::vector<MidiNote>& allNotes, int layerKey, const ExportTiming& timing)
 {
     const double bpm = juce::jlimit (20.0, 999.0, timing.hostBpm);
     const bool drums = layerKey == kDrumLayer;
     const int channel = drums ? 10 : 1;
 
     // Per pitch, in onset order, so each note can be cut at the next one.
-    std::map<int, std::vector<std::pair<int, int>>> byPitch;   // pitch -> (startTick, endTick)
+    struct Span { int start, end, velocity; bool operator< (const Span& o) const { return start < o.start; } };
+    std::map<int, std::vector<Span>> byPitch;
 
     for (const auto& note : allNotes)
     {
-        if (layerKeyFor (note) != layerKey)
+        if (note.layer != layerKey)
             continue;
 
         const int start = juce::jmax (0, juce::roundToInt (tickFor (note.onset, timing)));
         const int end   = juce::jmax (start + kMinNoteTicks, juce::roundToInt (tickFor (note.offset, timing)));
-        byPitch[note.pitch].emplace_back (start, end);
+        byPitch[note.pitch].push_back ({ start, end, note.velocity });
     }
 
     juce::MidiMessageSequence ons, offs;
@@ -78,17 +79,19 @@ juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layer
 
         for (size_t i = 0; i < spans.size(); ++i)
         {
-            const int start = spans[i].first;
+            const int start = spans[i].start;
 
-            if (i > 0 && start == spans[i - 1].first)
-                continue;   // a duplicate onset on the same pitch can't be represented
+            // Quantize can stack two notes of one pitch on
+            // the same tick, which MIDI can't represent: keep the first.
+            if (i > 0 && start == spans[i - 1].start)
+                continue;
 
-            int end = spans[i].second;
+            int end = spans[i].end;
             if (i + 1 < spans.size())
-                end = juce::jmin (end, spans[i + 1].first);
+                end = juce::jmin (end, spans[i + 1].start);
             end = juce::jmax (end, start + 1);
 
-            ons.addEvent  (juce::MidiMessage::noteOn  (channel, pitch, kFixedVelocity), start);
+            ons.addEvent  (juce::MidiMessage::noteOn  (channel, pitch, (juce::uint8) juce::jlimit (1, 127, spans[i].velocity)), start);
             offs.addEvent (juce::MidiMessage::noteOff (channel, pitch), end);
             lastTick = juce::jmax (lastTick, end);
         }

@@ -42,6 +42,7 @@ endforeach()
 # Sources shared by the plugin and the command-line tool. These include JUCE
 # modules directly rather than JuceHeader.h, so they compile in both.
 set (ENGINE_SOURCES
+    Source/Engine/Cleanup.cpp
     Source/Engine/MidiExport.cpp
     Source/Engine/ModelDownloader.cpp
     Source/Engine/ModelFiles.cpp
@@ -132,6 +133,7 @@ juce_add_console_app (atm-cli PRODUCT_NAME "atm-cli")
 
 target_sources (atm-cli PRIVATE
     ${ENGINE_SOURCES}
+    Source/Engine/Velocity.cpp   # research only: not part of the plugin
     Source/Cli/atm-cli.cpp)
 
 target_include_directories (atm-cli PRIVATE Source)

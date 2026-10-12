@@ -59,6 +59,16 @@ Canvas::Canvas()
     addChildComponent (actionChip);
 }
 
+void Canvas::setGridDivisions (int divisions)
+{
+    // The roll shows the grid quantize snaps to.
+    if (divisions != gridDivisions)
+    {
+        gridDivisions = divisions;
+        repaint (rollArea());
+    }
+}
+
 Canvas::~Canvas()
 {
     clearLayers();
@@ -134,20 +144,33 @@ void Canvas::setProgressTime (double seconds)
 }
 
 //==============================================================================
-void Canvas::setTranscription (int newRunId, const std::vector<msl::Note>& allNotes)
+void Canvas::setNotes (int newRunId, int version, const std::vector<atm::MidiNote>& newNotes)
 {
-    if (newRunId != runId || allNotes.size() < notes.size())
+    if (newRunId != runId)
     {
         runId = newRunId;
         clearLayers();
         repaint();
     }
 
-    if (allNotes.size() == notes.size())
+    if (version == notesVersion)
         return;
 
-    for (size_t i = notes.size(); i < allNotes.size(); ++i)
-        addNote (allNotes[i]);
+    notesVersion = version;
+    notes = newNotes;
+
+    // Layers are only ever added within a run; their stats are recounted.
+    for (auto& layer : layers)
+        layer = Layer { layer.key, layer.name, 0, 127, 0, std::move (layer.chip) };
+
+    for (const auto& note : notes)
+    {
+        auto& layer = ensureLayer (note.layer);
+        ++layer.count;
+        layer.lowest   = juce::jmin (layer.lowest, note.pitch);
+        layer.highest  = juce::jmax (layer.highest, note.pitch);
+        growPitchRange (note.pitch);
+    }
 
     layoutChips();
     updateSelection();
@@ -162,6 +185,7 @@ void Canvas::clearLayers()
 
     layers.clear();
     notes.clear();
+    notesVersion = -1;
     hasPitchRange = false;
     pitchLow = 48;
     pitchHigh = 72;
@@ -178,13 +202,11 @@ Canvas::Layer* Canvas::findLayer (int key)
     return nullptr;
 }
 
-void Canvas::addNote (const msl::Note& note)
+void Canvas::growPitchRange (int pitch)
 {
-    notes.push_back (note);
-
     // Pitch range: whole octaves around everything seen, at least two of
     // them, and it only grows so streaming notes never make the roll jump.
-    const int octaveLow  = (note.pitch / 12) * 12;
+    const int octaveLow  = (pitch / 12) * 12;
     const int octaveHigh = octaveLow + 12;
 
     if (! hasPitchRange)
@@ -201,10 +223,12 @@ void Canvas::addNote (const msl::Note& note)
         pitchHigh += 12;
 
     pitchHigh = juce::jmin (pitchHigh, 132);
+}
 
-    // The layer, created in key order (roughly GM family order, drums last)
-    // so chips never reshuffle while notes stream in.
-    const int key = atm::layerKeyFor (note);
+Canvas::Layer& Canvas::ensureLayer (int key)
+{
+    // Created in key order (roughly GM family order, drums last) so chips
+    // never reshuffle while notes stream in.
     auto* layer = findLayer (key);
 
     if (layer == nullptr)
@@ -237,9 +261,7 @@ void Canvas::addNote (const msl::Note& note)
         layer = &*layers.insert (pos, std::move (fresh));
     }
 
-    ++layer->count;
-    layer->lowest  = juce::jmin (layer->lowest, note.pitch);
-    layer->highest = juce::jmax (layer->highest, note.pitch);
+    return *layer;
 }
 
 void Canvas::updateSelection()
@@ -314,12 +336,12 @@ float Canvas::pitchTop (int pitch) const
     return (float) rollArea().getBottom() - (float) (pitch - pitchLow + 1) * rowHeight();
 }
 
-juce::Rectangle<float> Canvas::noteBounds (const msl::Note& note) const
+juce::Rectangle<float> Canvas::noteBounds (const atm::MidiNote& note) const
 {
     const float rowH = rowHeight();
     const float inset = rowH >= 4.0f ? 1.0f : 0.0f;
     const float x = timeToX (note.onset);
-    const float w = note.is_drum ? kDrumTickW : juce::jmax (2.0f, timeToX (note.offset) - x);
+    const float w = note.drum ? kDrumTickW : juce::jmax (2.0f, timeToX (note.offset) - x);
 
     return { x, pitchTop (note.pitch) + inset, w, juce::jmax (1.0f, rowH - 2.0f * inset) };
 }
@@ -336,9 +358,11 @@ void Canvas::layoutChips()
     // Flowed left to right along the top of the roll, wrapping if a long
     // instrument list outruns the width. Each fills with the surface shade
     // at its own height so it disappears into the gradient.
-    const auto area = notesArea().reduced (kChipInset);
-    int x = area.getX(), y = area.getY();
+    auto area = notesArea().reduced (kChipInset);
     const auto base = LnF::background();
+    const float height = (float) juce::jmax (1, getHeight());
+
+    int x = area.getX(), y = area.getY();
 
     for (auto& layer : layers)
     {
@@ -350,12 +374,12 @@ void Canvas::layoutChips()
         }
 
         layer.chip->setBounds (x, y, w, LayerChip::kHeight);
-        layer.chip->setSurfaceColour (LnF::surfaceAt (base, (float) (y + LayerChip::kHeight / 2) / (float) juce::jmax (1, getHeight())));
+        layer.chip->setSurfaceColour (LnF::surfaceAt (base, (float) (y + LayerChip::kHeight / 2) / height));
         x += w + kChipGap;
     }
 
     // The hover readout follows the last chip, or starts a new row.
-    if (x + 200 > area.getRight() && ! layers.empty())
+    if (x + 260 > area.getRight() && ! layers.empty())
     {
         x = area.getX();
         y += LayerChip::kHeight + kChipGap;
@@ -555,8 +579,20 @@ void Canvas::paintGrid (juce::Graphics& g) const
     const double beat = grid->beatSeconds();
     const float beatPx = (float) beat * (timeToX (length) - timeToX (0.0)) / (float) length;
 
-    // Beats only when they have room to read as a grid; bars always.
-    const bool drawBeats = beatPx >= 7.0f;
+    // Three strengths, a step apart in the alpha hierarchy: bars, beats, and
+    // the quantize grid's subdivisions between beats. The finer levels fade
+    // with their spacing rather than switching off: full strength at 10 px
+    // apart, gone by 3 px, so a long file's subdivisions dissolve instead of
+    // washing the roll grey, and a 20 s memo's 1/16 lines (5 px apart) are
+    // still there at half strength.
+    constexpr float kBeatAlpha = 0.08f, kSubdivisionAlpha = 0.04f;
+    const auto fade = [] (float spacingPx) { return juce::jlimit (0.0f, 1.0f, (spacingPx - 3.0f) / 7.0f); };
+
+    const float beatAlpha = kBeatAlpha * fade (beatPx);
+    const bool drawBeats = beatAlpha > 0.004f;
+    const float subPx = beatPx / (float) juce::jmax (1, gridDivisions);
+    const float subdivisionAlpha = kSubdivisionAlpha * fade (subPx);
+    const bool drawSubdivisions = gridDivisions > 1 && subdivisionAlpha > 0.004f;
     const bool drawNumbers = beatPx * (float) grid->beatsPerBar >= 26.0f;
 
     const int firstK = (int) std::floor (-grid->firstBeat / beat);
@@ -567,6 +603,18 @@ void Canvas::paintGrid (juce::Graphics& g) const
     for (int k = firstK; k <= lastK; ++k)
     {
         const double t = grid->beatTime (k);
+
+        if (drawSubdivisions)
+        {
+            g.setColour (LnF::ink().withAlpha (subdivisionAlpha));
+            for (int d = 1; d < gridDivisions; ++d)
+            {
+                const double ts = t + d * beat / gridDivisions;
+                if (ts >= 0.0 && ts <= length)
+                    g.drawVerticalLine (juce::roundToInt (timeToX (ts)), area.getY(), area.getBottom());
+            }
+        }
+
         if (t < 0.0 || t > length)
             continue;
 
@@ -576,7 +624,7 @@ void Canvas::paintGrid (juce::Graphics& g) const
             continue;
 
         const float x = timeToX (t);
-        g.setColour (LnF::ink().withAlpha (bar ? kAlphaDivider : 0.06f));
+        g.setColour (LnF::ink().withAlpha (bar ? kAlphaDivider : beatAlpha));
         g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
 
         // Bar 1 is the first downbeat; anything before it is a pickup and
@@ -653,7 +701,7 @@ void Canvas::paintNotes (juce::Graphics& g) const
     {
         g.setColour (colourFor (key));
         for (const auto& note : notes)
-            if (atm::layerKeyFor (note) == key)
+            if (note.layer == key)
                 g.fillRoundedRectangle (noteBounds (note), 1.5f);
     };
 
@@ -689,9 +737,9 @@ void Canvas::paintHoverInfo (juce::Graphics& g) const
     const bool drums = layer->key == atm::kDrumLayer;
     juce::String text = juce::String (layer->count) + (drums ? (layer->count == 1 ? " hit" : " hits")
                                                              : (layer->count == 1 ? " note" : " notes"));
+    const auto dash = juce::String (juce::CharPointer_UTF8 ("\xE2\x80\x93"));
     if (! drums)
-        text += kDot + atm::pitchName (layer->lowest) + juce::String (juce::CharPointer_UTF8 ("\xE2\x80\x93"))
-              + atm::pitchName (layer->highest);
+        text += kDot + atm::pitchName (layer->lowest) + dash + atm::pitchName (layer->highest);
 
     g.setFont (LnF::uiFont (12.0f));
     g.setColour (LnF::ink().withAlpha (kAlphaSecondary));
@@ -788,7 +836,7 @@ int Canvas::layerAt (juce::Point<float> pos) const
     const auto hits = [&] (int key)
     {
         for (const auto& note : notes)
-            if (atm::layerKeyFor (note) == key && noteBounds (note).expanded (1.0f, 0.0f).contains (pos))
+            if (note.layer == key && noteBounds (note).expanded (1.0f, 0.0f).contains (pos))
                 return true;
         return false;
     };

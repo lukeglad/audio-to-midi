@@ -2,21 +2,26 @@
 // code the plugin uses.
 //
 //   atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]
+//           [--quantize PCT] [--grid 4|8|16]
 //
 // Prints the device the model ran on, timings, a per-instrument count and
 // the first N notes (default 20). --midi writes one .mid per layer into DIR,
 // conformed to the detected tempo as the plugin does (--bpm is the host
 // tempo written into the file, default 120), reads each back and reports
-// the worst onset error. Exit code 0 on success, 1 on failure, 2 on
+// the worst onset error. The cleanup flags run the same cleanup the plugin
+// does before export; with --quantize 100 the check also confirms every
+// onset sits on the grid. Exit code 0 on success, 1 on failure, 2 on
 // usage. The model must already be installed (the plugin downloads it).
 
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
+#include "Engine/Cleanup.h"
 #include "Engine/MidiExport.h"
 #include "Engine/ModelFiles.h"
 #include "Engine/Resampler.h"
 #include "Engine/Tempo.h"
+#include "Engine/Velocity.h"   // research only; not in the plugin
 #include "Engine/TranscriptionService.h"
 
 #include <condition_variable>
@@ -31,8 +36,10 @@ namespace
     int usage()
     {
         print ("usage: atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]");
+        print ("               [--quantize PCT] [--grid 4|8|16]");
         print ("       atm-cli --resample-check     (alignment test, no model needed)");
         print ("       atm-cli --tempo-check        (synthetic click tracks, no model needed)");
+        print ("       atm-cli --velocity-check     (synthetic tones at known levels, no model needed)");
         return 2;
     }
 
@@ -127,6 +134,72 @@ namespace
     }
 }
 
+namespace
+{
+    /** Two overlapping parts: a melody stepping up in loudness, over a
+        steady-level bass on other pitches. The melody's velocities must rise
+        with its level (the bass must not leak into them), and the bass,
+        steady, must come out at one velocity give or take. */
+    int velocityCheck()
+    {
+        constexpr double rate = 44100.0;
+        SourceAudio audio;
+        audio.sampleRate = rate;
+        audio.samples.setSize (1, (int) (10.0 * rate));
+        audio.samples.clear();
+        std::vector<msl::Note> notes;
+
+        const auto addTone = [&] (double onset, int pitch, float gain, int program)
+        {
+            const double f = 440.0 * std::pow (2.0, (pitch - 69) / 12.0);
+            const int start = (int) (onset * rate), len = (int) (0.4 * rate);
+            for (int i = 0; i < len; ++i)
+            {
+                const double env = std::exp (-i / (0.25 * rate));
+                audio.samples.addSample (0, start + i, gain * (float) (env * (std::sin (2.0 * juce::MathConstants<double>::pi * f * i / rate)
+                                                                              + 0.4 * std::sin (4.0 * juce::MathConstants<double>::pi * f * i / rate))));
+            }
+            notes.push_back ({ onset, onset + 0.4, pitch, program, false });
+        };
+
+        const float melodyGains[] = { 0.02f, 0.05f, 0.1f, 0.2f, 0.4f, 0.8f };
+        for (int i = 0; i < 6; ++i)
+        {
+            addTone (0.5 + i * 1.5, 72 + (i % 3) * 2, melodyGains[i], 0);   // piano melody
+            addTone (0.5 + i * 1.5, 40, 0.3f, 33);                            // steady bass underneath
+        }
+
+        const auto velocities = atm::velocitiesFromLevels (notes, atm::measureLevels (audio, notes));
+
+        juce::String melody, bass;
+        int lastMelody = 0, bassLo = 127, bassHi = 0;
+        bool rising = true;
+        for (size_t i = 0; i < notes.size(); ++i)
+        {
+            const int v = velocities[i];
+            if (notes[i].program == 0)
+            {
+                melody << v << " ";
+                rising = rising && v > lastMelody;
+                lastMelody = v;
+            }
+            else
+            {
+                bass << v << " ";
+                bassLo = juce::jmin (bassLo, v);
+                bassHi = juce::jmax (bassHi, v);
+            }
+        }
+
+        // A steady part has no real spread to stretch over 40-120: the
+        // per-layer mapping only kicks in past 0.5 dB, else it sits at 80.
+        const bool bassSteady = bassHi - bassLo <= 12;
+        print ("melody (rising level):  " + melody + (rising ? " ok" : " WRONG"));
+        print ("bass   (steady level):  " + bass + (bassSteady ? " ok" : " WRONG"));
+        return rising && bassSteady ? 0 : 1;
+    }
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // message manager, for the service's WeakReferences
@@ -135,6 +208,8 @@ int main (int argc, char* argv[])
         return resampleCheck();
     if (argc == 2 && juce::String (argv[1]) == "--tempo-check")
         return tempoCheck();
+    if (argc == 2 && juce::String (argv[1]) == "--velocity-check")
+        return velocityCheck();
 
     juce::File file;
     auto model = atm::kDefaultModelSize;
@@ -142,6 +217,7 @@ int main (int argc, char* argv[])
     int notesToPrint = 20;
     juce::File midiDir;
     double bpm = 120.0;
+    atm::CleanupSettings cleanup;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -155,6 +231,13 @@ int main (int argc, char* argv[])
             midiDir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[++i]);
         else if (arg == "--bpm" && i + 1 < argc)
             bpm = juce::String (argv[++i]).getDoubleValue();
+        else if (arg == "--quantize" && i + 1 < argc)
+            cleanup.quantize = juce::String (argv[++i]).getDoubleValue() / 100.0;
+        else if (arg == "--grid" && i + 1 < argc)
+        {
+            const int g = juce::String (argv[++i]).getIntValue();
+            cleanup.grid = g == 4 ? atm::Grid::quarter : g == 8 ? atm::Grid::eighth : atm::Grid::sixteenth;
+        }
         else if (const auto size = atm::modelSizeFromName (arg))
             model = *size;
         else if (file == juce::File())
@@ -261,13 +344,17 @@ int main (int argc, char* argv[])
                                     est.bpm, est.firstBeat, est.downbeat, est.confidence,
                                     juce::Time::getMillisecondCounterHiRes() - t1));
 
+    // 5. Cleanup -- what the plugin shows and exports.
+    const auto cleaned = atm::cleanUp (notes, cleanup, est);
+    print (juce::String::formatted ("cleanup:  quantize %.0f%% %s", cleanup.quantize * 100.0, atm::gridName (cleanup.grid).toRawUTF8()));
+
     atm::ExportTiming timing;
     timing.hostBpm = bpm;
     timing.conform = true;
     timing.tempo = est;
-    timing.earliestOnset = atm::earliestOnsetOf (notes);
+    timing.earliestOnset = atm::earliestOnsetOf (cleaned);
 
-    // 5. MIDI per layer, read back to check the timing survives the round trip.
+    // 6. MIDI per layer, read back to check the timing survives the round trip.
     if (midiDir != juce::File())
     {
         midiDir.createDirectory();
@@ -279,7 +366,7 @@ int main (int argc, char* argv[])
         for (const auto& [layer, count] : perLayer)
         {
             const auto out = midiDir.getChildFile (atm::layerMidiFileName (audio.fileName, layer));
-            if (! atm::writeMidiFile (atm::buildLayerMidi (notes, layer, timing), out))
+            if (! atm::writeMidiFile (atm::buildLayerMidi (cleaned, layer, timing), out))
             {
                 print ("midi:     couldn't write " + out.getFullPathName());
                 allOk = false;
@@ -289,6 +376,22 @@ int main (int argc, char* argv[])
             juce::MidiFile readBack;
             juce::FileInputStream in (out);
             readBack.readFrom (in);
+
+            // Grid check on the ticks, before converting to seconds: with full
+            // quantize every note-on must sit on a grid division.
+            int onGrid = 0, noteOns = 0;
+            {
+                const int division = atm::kTicksPerQuarter / (int) cleanup.grid;
+                const auto* ticks = readBack.getTrack (0);
+                for (int e = 0; ticks != nullptr && e < ticks->getNumEvents(); ++e)
+                    if (ticks->getEventPointer (e)->message.isNoteOn())
+                    {
+                        ++noteOns;
+                        const int t = juce::roundToInt (ticks->getEventPointer (e)->message.getTimeStamp());
+                        if (t % division <= 1 || division - t % division <= 1)
+                            ++onGrid;
+                    }
+            }
             readBack.convertTimestampTicksToSeconds();
 
             std::vector<double> got;
@@ -300,8 +403,8 @@ int main (int argc, char* argv[])
             // Where each onset should land, in the file's seconds (its tempo
             // meta is the host tempo, which convertTimestampTicksToSeconds used).
             std::vector<double> want;
-            for (const auto& note : notes)
-                if (atm::layerKeyFor (note) == layer)
+            for (const auto& note : cleaned)
+                if (note.layer == layer)
                     want.push_back (juce::jmax (0.0, atm::tickFor (note.onset, timing)) / atm::kTicksPerQuarter * 60.0 / bpm);
 
             std::sort (got.begin(), got.end());
@@ -318,9 +421,10 @@ int main (int argc, char* argv[])
                 worst = std::max (worst, best);
             }
 
-            print (juce::String::formatted ("midi:     %-44s %4d note-ons (%d notes), worst onset error %.2f ms",
-                                            out.getFileName().toRawUTF8(), (int) got.size(), count, worst * 1000.0));
-            allOk = allOk && worst < 0.002;
+            print (juce::String::formatted ("midi:     %-44s %4d note-ons (%d notes), worst onset error %.2f ms, %d/%d on the %s grid",
+                                            out.getFileName().toRawUTF8(), (int) got.size(), count, worst * 1000.0,
+                                            onGrid, noteOns, atm::gridName (cleanup.grid).toRawUTF8()));
+            allOk = allOk && worst < 0.002 && (cleanup.quantize < 1.0 || onGrid == noteOns);
         }
 
         if (! allOk)

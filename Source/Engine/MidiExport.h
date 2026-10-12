@@ -3,23 +3,13 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <muscriptor/note.hpp>
 
+#include "Cleanup.h"
 #include "Tempo.h"
 
 #include <vector>
 
 namespace atm
 {
-    //==========================================================================
-    // Layers: one per instrument the model reported. Drums are one layer
-    // whatever program they decoded as (128, or 96 routed to drums).
-
-    inline constexpr int kDrumLayer = msl::DRUM_PROGRAM;
-
-    inline int layerKeyFor (const msl::Note& note) noexcept
-    {
-        return note.is_drum ? kDrumLayer : note.program;
-    }
-
     /** "acoustic guitar", "drums", "program 97". */
     juce::String layerName (int layerKey);
 
@@ -34,9 +24,6 @@ namespace atm
     /** Shortest note written: a 1/32 note. Drum hits arrive 10 ms long and
         would be invisible slivers in a piano roll. */
     inline constexpr int kMinNoteTicks = kTicksPerQuarter / 8;
-
-    /** Until velocity measurement exists (build step 4b). */
-    inline constexpr juce::uint8 kFixedVelocity = 100;
 
     /**
         How seconds become ticks.
@@ -63,17 +50,17 @@ namespace atm
     };
 
     /** The earliest onset in `notes`, or 0 with none. */
-    double earliestOnsetOf (const std::vector<msl::Note>& notes) noexcept;
+    double earliestOnsetOf (const std::vector<MidiNote>& notes) noexcept;
 
     double tickFor (double seconds, const ExportTiming&);
 
     /**
-        One layer's notes as a single-track MIDI file. Drums go on channel 10,
-        everything else on channel 1 with the GM program the model decoded.
-        Same-pitch notes never overlap: a note is cut where the next one on
-        its pitch starts.
+        One layer's notes (after cleanup) as a single-track MIDI file. Drums go
+        on channel 10, everything else on channel 1 with the GM program the
+        model decoded. Same-pitch notes never overlap: a note is cut where the
+        next one on its pitch starts.
     */
-    juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layerKey, const ExportTiming&);
+    juce::MidiFile buildLayerMidi (const std::vector<MidiNote>& allNotes, int layerKey, const ExportTiming&);
 
     /** Writes `midi` to `file`, replacing it. */
     bool writeMidiFile (const juce::MidiFile& midi, const juce::File& file);

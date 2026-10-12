@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "Engine/Cleanup.h"
 #include "Engine/ModelDownloader.h"
 #include "Engine/TranscriptionService.h"
 #include "SourceAudio.h"
@@ -148,6 +149,21 @@ public:
     void doubleTempo();
 
     //==========================================================================
+    // Cleanup. Message thread only.
+
+    /** Cleanup settings are the user's working preferences: they carry over
+        from one file to the next (the tempo doesn't). */
+    const atm::CleanupSettings& getCleanup() const noexcept { return cleanup; }
+    void setCleanup (const atm::CleanupSettings&);
+
+    /** The notes as shown and exported: raw notes after cleanup. Recomputed
+        only when something they depend on changed. */
+    const std::vector<atm::MidiNote>& getCleanNotes() const;
+
+    /** Changes whenever getCleanNotes() would change. */
+    int getNotesVersion() const noexcept { return notesVersion; }
+
+    //==========================================================================
     // Editor size, saved with the session but recorded only on a real corner
     // drag (see the editor's SizeMemoryConstrainer). 0 = never resized.
     int lastEditorWidth = 0, lastEditorHeight = 0;
@@ -158,6 +174,7 @@ private:
 
     void onJobProgress (int generation, atm::Phase, float progress);
     void onJobTempo (int generation, atm::TempoEstimate);
+    void notesChanged();
     void onJobNotes (int generation, std::vector<msl::Note> newNotes, double finalizedThrough);
     void onJobFinished (int generation, atm::Outcome, juce::String error, juce::String device);
 
@@ -167,6 +184,10 @@ private:
 
     TranscriptionState transcription;
     TempoState tempo;
+    atm::CleanupSettings cleanup;
+    int notesVersion = 0;
+    mutable std::vector<atm::MidiNote> cleanNotes;
+    mutable int cleanNotesVersion = -1;
     std::atomic<double> hostBpm { 120.0 };
     std::shared_ptr<atm::TranscriptionJob> job;
     int jobGeneration = 0;   // a callback from an older job is ignored

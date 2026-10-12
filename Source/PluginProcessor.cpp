@@ -143,7 +143,8 @@ void AudioToMidiProcessor::startTranscription()
     transcription = {};
     transcription.model = atm::preferredModel();
 
-    tempo = {};   // a new run gets a fresh tempo
+    tempo = {};   // a new run gets a fresh tempo; cleanup settings carry over
+    ++notesVersion;
 
     if (source == nullptr)
     {
@@ -239,7 +240,7 @@ void AudioToMidiProcessor::chooseModel (atm::ModelSize size)
     transcription = {};
     transcription.model = size;
     transcription.phase = source != nullptr ? TranscriptionPhase::waitingForModel : TranscriptionPhase::none;
-    sendChangeMessage();
+    notesChanged();
 }
 
 void AudioToMidiProcessor::cancelDownload()
@@ -314,7 +315,38 @@ void AudioToMidiProcessor::onJobTempo (int generation, atm::TempoEstimate estima
     if (! tempo.userEdited)
         tempo.bpm = estimate.bpm;
 
+    notesChanged();   // quantize follows the grid
+}
+
+void AudioToMidiProcessor::notesChanged()
+{
+    ++notesVersion;
     sendChangeMessage();
+}
+
+void AudioToMidiProcessor::setCleanup (const atm::CleanupSettings& settings)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (settings == cleanup)
+        return;
+
+    cleanup = settings;
+    notesChanged();
+}
+
+const std::vector<atm::MidiNote>& AudioToMidiProcessor::getCleanNotes() const
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (cleanNotesVersion != notesVersion)
+    {
+        const auto grid = tempo.hasEstimate ? std::optional (tempo.effective()) : std::nullopt;
+        cleanNotes = atm::cleanUp (transcription.notes, cleanup, grid);
+        cleanNotesVersion = notesVersion;
+    }
+
+    return cleanNotes;
 }
 
 //==============================================================================
@@ -324,7 +356,7 @@ void AudioToMidiProcessor::setBpm (double bpm)
 
     tempo.bpm = juce::jlimit (20.0, 400.0, bpm);
     tempo.userEdited = true;
-    sendChangeMessage();
+    notesChanged();
 }
 
 void AudioToMidiProcessor::halveTempo()
@@ -364,7 +396,7 @@ void AudioToMidiProcessor::onJobNotes (int generation, std::vector<msl::Note> ne
 
     transcription.notes.insert (transcription.notes.end(), newNotes.begin(), newNotes.end());
     transcription.finalizedThrough = juce::jmax (transcription.finalizedThrough, finalizedThrough);
-    sendChangeMessage();
+    notesChanged();
 }
 
 void AudioToMidiProcessor::onJobFinished (int generation, atm::Outcome outcome, juce::String error, juce::String device)
@@ -381,6 +413,7 @@ void AudioToMidiProcessor::onJobFinished (int generation, atm::Outcome outcome, 
             transcription.phase = TranscriptionPhase::done;
             transcription.progress = 1.0f;
             transcription.finalizedThrough = source != nullptr ? source->getLengthSeconds() : 0.0;
+            ++notesVersion;
             break;
 
         case atm::Outcome::cancelled:

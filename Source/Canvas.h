@@ -1,9 +1,9 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include <muscriptor/note.hpp>
 #include <optional>
 
+#include "Engine/Cleanup.h"
 #include "Engine/Tempo.h"
 
 #include "Chip.h"
@@ -52,14 +52,19 @@ public:
     /** Where the transcription has got to, in seconds; negative hides the line. */
     void setProgressTime (double seconds);
 
-    /** The beat grid drawn through the roll (faint beats, stronger bars, bar
-        numbers along the bottom). Empty hides it. */
+    /** The beat grid drawn through the roll: bars, beats and the quantize
+        grid's subdivisions, each fainter than the last, with bar numbers
+        along the bottom. Empty hides it. */
     void setGrid (std::optional<atm::TempoEstimate>);
 
-    /** The current run's notes, append-only within a run. A new `runId`
-        clears the layers, selection and pitch range. Cheap to call often:
-        only notes past the ones already seen are processed. */
-    void setTranscription (int runId, const std::vector<msl::Note>& notes);
+    /** The current run's notes after cleanup. A new `runId` clears the
+        layers, selection and pitch range; within a run, layers are only ever
+        added and the pitch range only grows, so nothing jumps. Cheap to call
+        often: nothing happens unless `version` changed. */
+    void setNotes (int runId, int version, const std::vector<atm::MidiNote>& notes);
+
+    /** Lines per beat drawn between the beat lines: the quantize grid. */
+    void setGridDivisions (int);
 
     std::function<void()> onAction;
 
@@ -92,7 +97,7 @@ private:
     float timeToX (double seconds) const;
     float pitchTop (int pitch) const;
     float rowHeight() const;
-    juce::Rectangle<float> noteBounds (const msl::Note&) const;
+    juce::Rectangle<float> noteBounds (const atm::MidiNote&) const;
 
     void paintWaveform (juce::Graphics&) const;
     void paintRuler (juce::Graphics&) const;
@@ -105,7 +110,8 @@ private:
     void paintMessage (juce::Graphics&) const;
 
     void clearLayers();
-    void addNote (const msl::Note&);
+    Layer& ensureLayer (int key);
+    void growPitchRange (int pitch);
     Layer* findLayer (int key);
     void layoutChips();
     void layoutActionChip();
@@ -122,10 +128,12 @@ private:
     Status status;
     double progressTime = -1.0;
     std::optional<atm::TempoEstimate> grid;
+    int gridDivisions = 4;   // lines per beat: the quantize grid (1/16 = 4)
     Chip actionChip;
 
     int runId = -1;
-    std::vector<msl::Note> notes;
+    int notesVersion = -1;
+    std::vector<atm::MidiNote> notes;
     std::vector<Layer> layers;                // ordered by key: GM family order, drums last
     int pitchLow = 48, pitchHigh = 72;        // [low, high), whole octaves; grows only
     bool hasPitchRange = false;
