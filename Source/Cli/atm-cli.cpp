@@ -1,15 +1,17 @@
 // atm-cli: decode -> resample -> transcribe from a terminal, through the same
 // code the plugin uses.
 //
-//   atm-cli <audio file> [small|medium|large] [--cpu] [--notes N]
+//   atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]
 //
 // Prints the device the model ran on, timings, a per-instrument count and
-// the first N notes (default 20). Exit code 0 on success, 1 on failure, 2 on
+// the first N notes (default 20). --midi writes one .mid per layer into DIR
+// (at --bpm, default 120), reads each back and reports the worst onset error. Exit code 0 on success, 1 on failure, 2 on
 // usage. The model must already be installed (the plugin downloads it).
 
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
+#include "Engine/MidiExport.h"
 #include "Engine/ModelFiles.h"
 #include "Engine/Resampler.h"
 #include "Engine/TranscriptionService.h"
@@ -25,7 +27,7 @@ namespace
 
     int usage()
     {
-        print ("usage: atm-cli <audio file> [small|medium|large] [--cpu] [--notes N]");
+        print ("usage: atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]");
         print ("       atm-cli --resample-check     (alignment test, no model needed)");
         return 2;
     }
@@ -74,6 +76,8 @@ int main (int argc, char* argv[])
     auto model = atm::kDefaultModelSize;
     bool forceCpu = false;
     int notesToPrint = 20;
+    juce::File midiDir;
+    double bpm = 120.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -83,6 +87,10 @@ int main (int argc, char* argv[])
             forceCpu = true;
         else if (arg == "--notes" && i + 1 < argc)
             notesToPrint = juce::String (argv[++i]).getIntValue();
+        else if (arg == "--midi" && i + 1 < argc)
+            midiDir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[++i]);
+        else if (arg == "--bpm" && i + 1 < argc)
+            bpm = juce::String (argv[++i]).getDoubleValue();
         else if (const auto size = atm::modelSizeFromName (arg))
             model = *size;
         else if (file == juce::File())
@@ -174,13 +182,68 @@ int main (int argc, char* argv[])
     }
 
     // 3. Report.
-    std::map<int, int> perProgram;
+    std::map<int, int> perLayer;
     for (const auto& note : notes)
-        ++perProgram[note.program];
+        ++perLayer[atm::layerKeyFor (note)];
 
-    print ("notes:    " + juce::String (notes.size()) + " in " + juce::String (perProgram.size()) + " instrument(s)");
-    for (const auto& [program, count] : perProgram)
-        print ("  " + atm::instrumentDisplayName (program).paddedRight (' ', 26) + juce::String (count));
+    print ("notes:    " + juce::String (notes.size()) + " in " + juce::String (perLayer.size()) + " layer(s)");
+    for (const auto& [layer, count] : perLayer)
+        print ("  " + atm::layerName (layer).paddedRight (' ', 26) + juce::String (count));
+
+    // 4. MIDI per layer, read back to check the timing survives the round trip.
+    if (midiDir != juce::File())
+    {
+        midiDir.createDirectory();
+        bool allOk = true;
+
+        for (const auto& [layer, count] : perLayer)
+        {
+            const auto out = midiDir.getChildFile (atm::layerMidiFileName (audio.fileName, layer));
+            if (! atm::writeMidiFile (atm::buildLayerMidi (notes, layer, bpm), out))
+            {
+                print ("midi:     couldn't write " + out.getFullPathName());
+                allOk = false;
+                continue;
+            }
+
+            juce::MidiFile readBack;
+            juce::FileInputStream in (out);
+            readBack.readFrom (in);
+            readBack.convertTimestampTicksToSeconds();
+
+            std::vector<double> got;
+            const auto* track = readBack.getTrack (0);
+            for (int e = 0; track != nullptr && e < track->getNumEvents(); ++e)
+                if (track->getEventPointer (e)->message.isNoteOn())
+                    got.push_back (track->getEventPointer (e)->message.getTimeStamp());
+
+            std::vector<double> want;
+            for (const auto& note : notes)
+                if (atm::layerKeyFor (note) == layer)
+                    want.push_back (note.onset);
+
+            std::sort (got.begin(), got.end());
+            std::sort (want.begin(), want.end());
+            want.erase (std::unique (want.begin(), want.end(), [] (double a, double b) { return std::abs (a - b) < 1e-9; }), want.end());
+
+            double worst = 0.0;
+            for (const double t : got)
+            {
+                const auto it = std::lower_bound (want.begin(), want.end(), t - 1.0);
+                double best = 1e9;
+                for (auto j = it; j != want.end() && *j <= t + 1.0; ++j)
+                    best = std::min (best, std::abs (*j - t));
+                worst = std::max (worst, best);
+            }
+
+            print (juce::String::formatted ("midi:     %-44s %4d note-ons (%d notes), worst onset error %.2f ms",
+                                            out.getFileName().toRawUTF8(), (int) got.size(), count, worst * 1000.0));
+            allOk = allOk && worst < 0.002;
+        }
+
+        if (! allOk)
+            return 1;
+    }
 
     std::sort (notes.begin(), notes.end(), [] (const msl::Note& a, const msl::Note& b) { return a.onset < b.onset; });
 

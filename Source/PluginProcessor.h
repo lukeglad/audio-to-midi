@@ -98,6 +98,14 @@ public:
 
     const TranscriptionState& getTranscription() const noexcept { return transcription; }
 
+    /** Changes whenever a new transcription replaces the current one, so a
+        view knows to drop what it built from the old notes. */
+    int getTranscriptionRun() const noexcept { return jobGeneration; }
+
+    /** The host's tempo, read from the playhead on the audio thread; 120 in
+        the standalone or before the host reports one. Any thread. */
+    double getHostBpm() const noexcept { return hostBpm.load(); }
+
     /** Runs the loaded audio through the preferred model, replacing any
         earlier result. With no model installed, waits for one. */
     void startTranscription();
@@ -132,6 +140,7 @@ private:
     std::atomic<int> loadGeneration { 0 };
 
     TranscriptionState transcription;
+    std::atomic<double> hostBpm { 120.0 };
     std::shared_ptr<atm::TranscriptionJob> job;
     int jobGeneration = 0;   // a callback from an older job is ignored
 

@@ -42,6 +42,7 @@ endforeach()
 # Sources shared by the plugin and the command-line tool. These include JUCE
 # modules directly rather than JuceHeader.h, so they compile in both.
 set (ENGINE_SOURCES
+    Source/Engine/MidiExport.cpp
     Source/Engine/ModelDownloader.cpp
     Source/Engine/ModelFiles.cpp
     Source/Engine/Resampler.cpp
@@ -84,6 +85,7 @@ target_sources (AudioToMidi PRIVATE
     Source/AudioFlowerLookAndFeel.cpp
     Source/Canvas.cpp
     Source/Chip.cpp
+    Source/LayerChip.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
     Source/TopBar.cpp)

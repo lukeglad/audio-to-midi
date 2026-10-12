@@ -19,3 +19,6 @@ CLAUDE.md
 
 # Local test files (generated / third-party excerpts), not shipped.
 test-audio/
+
+# Design mockups (throwaway HTML).
+mockups/

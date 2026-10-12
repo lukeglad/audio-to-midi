@@ -43,6 +43,8 @@ private:
     void timerCallback() override;
     void refreshFromProcessor();
     void showModelMenu();
+    juce::File writeLayerMidi (int layerKey, const juce::File& destination) const;
+    void saveLayerAs (int layerKey);
 
     static constexpr float kUiScale = 1.3f;
     static constexpr int   kMinWidth = 540, kMinHeight = 404;
@@ -74,6 +76,7 @@ private:
     Canvas canvas;
 
     SizeMemoryConstrainer sizeConstrainer;
+    std::unique_ptr<juce::FileChooser> saveChooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioToMidiEditor)
 };

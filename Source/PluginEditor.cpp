@@ -1,7 +1,6 @@
 #include "PluginEditor.h"
 #include "BinaryData.h"
-
-#include <map>
+#include "Engine/MidiExport.h"
 
 namespace
 {
@@ -11,31 +10,6 @@ namespace
     juce::String percent (float fraction)
     {
         return juce::String (juce::roundToInt (juce::jlimit (0.0f, 1.0f, fraction) * 100.0f)) + "%";
-    }
-
-    /** "acoustic guitar, drums, voice" from the notes, most notes first, at most four named. */
-    juce::String instrumentSummary (const std::vector<msl::Note>& notes)
-    {
-        std::map<int, int> counts;
-        for (const auto& note : notes)
-            ++counts[note.program];
-
-        std::vector<std::pair<int, int>> ordered (counts.begin(), counts.end());
-        std::sort (ordered.begin(), ordered.end(), [] (const auto& a, const auto& b) { return a.second > b.second; });
-
-        juce::StringArray names;
-        for (const auto& [program, count] : ordered)
-            names.add (atm::instrumentDisplayName (program));
-
-        constexpr int kMax = 4;
-        if (names.size() > kMax)
-        {
-            const int extra = names.size() - kMax;
-            names.removeRange (kMax, extra);
-            names.add ("+" + juce::String (extra) + " more");
-        }
-
-        return names.joinIntoString (", ");
     }
 }
 
@@ -65,6 +39,18 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
         else
             processorRef.retry();
     };
+
+    // Drag a layer chip out: write that layer's MIDI to a scratch file and
+    // hand it to the OS drag. Overwritten each time; the DAW copies it.
+    canvas.makeLayerMidiFile = [this] (int layerKey)
+    {
+        const auto source = processorRef.getSource();
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AudioFlower MIDI");
+        folder.createDirectory();
+        return writeLayerMidi (layerKey, folder.getChildFile (atm::layerMidiFileName (source != nullptr ? source->fileName
+                                                                                                       : juce::String(), layerKey)));
+    };
+    canvas.onSaveLayer = [this] (int layerKey) { saveLayerAs (layerKey); };
 
     processorRef.addChangeListener (this);
     refreshFromProcessor();
@@ -188,6 +174,7 @@ void AudioToMidiEditor::refreshFromProcessor()
     auto& downloader = processorRef.getDownloader();
 
     canvas.setSource (source);
+    canvas.setTranscription (processorRef.getTranscriptionRun(), t.notes);
     canvas.setLoadStatus (processorRef.getLoadingFileName(), processorRef.getLoadError());
 
     if (source != nullptr)
@@ -258,10 +245,18 @@ void AudioToMidiEditor::refreshFromProcessor()
                 break;
 
             case TranscriptionPhase::done:
-                status.primary = juce::String (t.notes.size()) + (t.notes.size() == 1 ? " note" : " notes")
-                                 + (t.notes.empty() ? "" : kDot + instrumentSummary (t.notes))
-                                 + kDot + modelName + " on " + t.device;
-                status.primaryAlpha = 0.45f;
+                // The layer chips say what was found. Only the cases that
+                // need explaining get a message.
+                if (t.notes.empty())
+                {
+                    status.primary = "no notes found";
+                    status.primaryAlpha = 0.45f;
+                }
+                else if (t.device == "cpu")
+                {
+                    status.primary = "ran on the cpu" + kDot + "gpu unavailable";
+                    status.primaryAlpha = 0.45f;
+                }
                 break;
 
             case TranscriptionPhase::cancelled:
@@ -327,5 +322,39 @@ void AudioToMidiEditor::showModelMenu()
         }
 
         safeThis->refreshFromProcessor();
+    });
+}
+
+//==============================================================================
+juce::File AudioToMidiEditor::writeLayerMidi (int layerKey, const juce::File& destination) const
+{
+    const auto midi = atm::buildLayerMidi (processorRef.getTranscription().notes, layerKey, processorRef.getHostBpm());
+    return atm::writeMidiFile (midi, destination) ? destination : juce::File();
+}
+
+void AudioToMidiEditor::saveLayerAs (int layerKey)
+{
+    const auto source = processorRef.getSource();
+    const auto suggested = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                               .getChildFile (atm::layerMidiFileName (source != nullptr ? source->fileName : juce::String(), layerKey));
+
+    saveChooser = std::make_unique<juce::FileChooser> ("save " + atm::layerName (layerKey) + " as midi", suggested, "*.mid");
+
+    juce::Component::SafePointer<AudioToMidiEditor> safeThis (this);
+    saveChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safeThis, layerKey] (const juce::FileChooser& chooser)
+    {
+        if (safeThis == nullptr)
+            return;
+
+        auto file = chooser.getResult();
+        if (file == juce::File())
+            return;
+
+        if (! file.hasFileExtension ("mid;midi"))
+            file = file.withFileExtension ("mid");
+
+        safeThis->writeLayerMidi (layerKey, file);
     });
 }

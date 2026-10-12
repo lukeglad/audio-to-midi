@@ -34,6 +34,13 @@ void AudioToMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 {
     juce::ScopedNoDenormals noDenormals;
 
+    // For MIDI export: notes convert to ticks at the host's tempo, so a
+    // dragged clip lines up with the audio in real time.
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+            if (const auto bpm = position->getBpm(); bpm.hasValue() && *bpm > 0.0)
+                hostBpm.store (*bpm, std::memory_order_relaxed);
+
     // Silent until the preview synth exists (build step 5).
     buffer.clear();
 }
