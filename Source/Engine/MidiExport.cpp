@@ -17,10 +17,42 @@ juce::String pitchName (int midiNote)
     return juce::String (names[midiNote % 12]) + juce::String (midiNote / 12 - 1);
 }
 
-juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layerKey, double bpm)
+int ExportTiming::leadInBeats() const noexcept
 {
-    bpm = juce::jlimit (20.0, 999.0, bpm);
-    const double ticksPerSecond = kTicksPerQuarter * bpm / 60.0;
+    if (! conform)
+        return 0;
+
+    // Enough whole beats that the earliest note (at beat beatAt(earliestOnset),
+    // negative when it precedes beat 0) lands at or after tick 0, then more
+    // until the downbeat sits on a bar line. A note a few ms before a beat is
+    // that beat, not a pickup: it gets rounded onto it rather than costing a
+    // whole bar of lead-in.
+    constexpr double kGrace = 0.08;   // beats
+    int lead = juce::jmax (0, (int) std::ceil (-tempo.beatAt (earliestOnset) - kGrace));
+    while ((lead + tempo.downbeat) % tempo.beatsPerBar != 0)
+        ++lead;
+    return lead;
+}
+
+double earliestOnsetOf (const std::vector<msl::Note>& notes) noexcept
+{
+    double earliest = std::numeric_limits<double>::max();
+    for (const auto& note : notes)
+        earliest = juce::jmin (earliest, note.onset);
+    return notes.empty() ? 0.0 : earliest;
+}
+
+double tickFor (double seconds, const ExportTiming& timing)
+{
+    if (timing.conform)
+        return (timing.tempo.beatAt (seconds) + timing.leadInBeats()) * kTicksPerQuarter;
+
+    return seconds * kTicksPerQuarter * juce::jlimit (20.0, 999.0, timing.hostBpm) / 60.0;
+}
+
+juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layerKey, const ExportTiming& timing)
+{
+    const double bpm = juce::jlimit (20.0, 999.0, timing.hostBpm);
     const bool drums = layerKey == kDrumLayer;
     const int channel = drums ? 10 : 1;
 
@@ -32,8 +64,8 @@ juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layer
         if (layerKeyFor (note) != layerKey)
             continue;
 
-        const int start = juce::roundToInt (note.onset * ticksPerSecond);
-        const int end   = juce::jmax (start + kMinNoteTicks, juce::roundToInt (note.offset * ticksPerSecond));
+        const int start = juce::jmax (0, juce::roundToInt (tickFor (note.onset, timing)));
+        const int end   = juce::jmax (start + kMinNoteTicks, juce::roundToInt (tickFor (note.offset, timing)));
         byPitch[note.pitch].emplace_back (start, end);
     }
 

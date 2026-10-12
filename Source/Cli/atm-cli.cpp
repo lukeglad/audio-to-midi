@@ -4,8 +4,10 @@
 //   atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]
 //
 // Prints the device the model ran on, timings, a per-instrument count and
-// the first N notes (default 20). --midi writes one .mid per layer into DIR
-// (at --bpm, default 120), reads each back and reports the worst onset error. Exit code 0 on success, 1 on failure, 2 on
+// the first N notes (default 20). --midi writes one .mid per layer into DIR,
+// conformed to the detected tempo as the plugin does (--bpm is the host
+// tempo written into the file, default 120), reads each back and reports
+// the worst onset error. Exit code 0 on success, 1 on failure, 2 on
 // usage. The model must already be installed (the plugin downloads it).
 
 #include <juce_core/juce_core.h>
@@ -14,6 +16,7 @@
 #include "Engine/MidiExport.h"
 #include "Engine/ModelFiles.h"
 #include "Engine/Resampler.h"
+#include "Engine/Tempo.h"
 #include "Engine/TranscriptionService.h"
 
 #include <condition_variable>
@@ -29,6 +32,7 @@ namespace
     {
         print ("usage: atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]");
         print ("       atm-cli --resample-check     (alignment test, no model needed)");
+        print ("       atm-cli --tempo-check        (synthetic click tracks, no model needed)");
         return 2;
     }
 
@@ -65,12 +69,72 @@ namespace
     }
 }
 
+namespace
+{
+    /** Click tracks at known tempos, with accents every four beats: the
+        detector must find the tempo within 0.1 BPM, the beat phase within
+        15 ms and the accented beat as the downbeat. */
+    int tempoCheck()
+    {
+        struct Case { double bpm, phase; bool withNotes; };
+        const Case cases[] = { { 97.3, 0.37, false }, { 72.0, 0.0, false }, { 140.0, 0.21, false },
+                               { 120.0, 0.5, false }, { 88.6, 0.62, true } };
+        bool ok = true;
+        juce::Random random (7);
+
+        for (const auto& c : cases)
+        {
+            constexpr double seconds = 30.0;
+            const int rate = (int) atm::kModelSampleRate;
+            std::vector<float> audio ((size_t) (seconds * rate), 0.0f);
+            std::vector<msl::Note> notes;
+            const double period = 60.0 / c.bpm;
+
+            // A faint noise floor, then a short burst per beat, louder on downbeats.
+            for (auto& x : audio)
+                x = 0.01f * (random.nextFloat() * 2.0f - 1.0f);
+
+            for (int k = 0; c.phase + k * period < seconds; ++k)
+            {
+                const double t = c.phase + k * period;
+                const float gain = (k % 4 == 0) ? 1.0f : 0.5f;
+                const int start = (int) (t * rate);
+                for (int i = 0; i < rate / 100 && start + i < (int) audio.size(); ++i)
+                    audio[(size_t) (start + i)] += gain * (random.nextFloat() * 2.0f - 1.0f) * std::exp (-(float) i / ((float) rate * 0.003f));
+
+                if (c.withNotes)
+                    notes.push_back ({ t, t + 0.01, (k % 4 == 0) ? 36 : 38, msl::DRUM_PROGRAM, true });
+            }
+
+            const auto est = atm::estimateTempo (audio, notes);
+
+            const double bpmError = std::abs (est.bpm - c.bpm);
+            double phaseError = std::fmod (std::abs (est.firstBeat - c.phase), period);
+            phaseError = juce::jmin (phaseError, period - phaseError);
+            // The accents sit at phase + 4k * period: the downbeat beat must land there.
+            double downbeatError = std::fmod (std::abs (est.beatTime (est.downbeat) - c.phase), 4.0 * period);
+            downbeatError = juce::jmin (downbeatError, 4.0 * period - downbeatError);
+
+            const bool pass = bpmError <= 0.1 && phaseError <= 0.015 && downbeatError <= 0.015;
+            ok = ok && pass;
+
+            print (juce::String::formatted ("%6.1f BPM @ %.2f s%s -> %6.2f BPM, first beat %.3f s, downbeat %d, conf %.2f: %s",
+                                            c.bpm, c.phase, c.withNotes ? " +notes" : "       ", est.bpm, est.firstBeat,
+                                            est.downbeat, est.confidence, pass ? "ok" : "WRONG"));
+        }
+
+        return ok ? 0 : 1;
+    }
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // message manager, for the service's WeakReferences
 
     if (argc == 2 && juce::String (argv[1]) == "--resample-check")
         return resampleCheck();
+    if (argc == 2 && juce::String (argv[1]) == "--tempo-check")
+        return tempoCheck();
 
     juce::File file;
     auto model = atm::kDefaultModelSize;
@@ -190,16 +254,32 @@ int main (int argc, char* argv[])
     for (const auto& [layer, count] : perLayer)
         print ("  " + atm::layerName (layer).paddedRight (' ', 26) + juce::String (count));
 
-    // 4. MIDI per layer, read back to check the timing survives the round trip.
+    // 4. Tempo, from the audio and the notes together.
+    const auto t1 = juce::Time::getMillisecondCounterHiRes();
+    const auto est = atm::estimateTempo (atm::resampleForModel (audio), notes);
+    print (juce::String::formatted ("tempo:    %.2f BPM, first beat %.3f s, downbeat %d, confidence %.2f (%.0f ms)",
+                                    est.bpm, est.firstBeat, est.downbeat, est.confidence,
+                                    juce::Time::getMillisecondCounterHiRes() - t1));
+
+    atm::ExportTiming timing;
+    timing.hostBpm = bpm;
+    timing.conform = true;
+    timing.tempo = est;
+    timing.earliestOnset = atm::earliestOnsetOf (notes);
+
+    // 5. MIDI per layer, read back to check the timing survives the round trip.
     if (midiDir != juce::File())
     {
         midiDir.createDirectory();
         bool allOk = true;
 
+        print (juce::String::formatted ("midi:     conformed to %.2f BPM, %d beat(s) of lead-in, first downbeat at bar %d",
+                                            est.bpm, timing.leadInBeats(), (timing.leadInBeats() + est.downbeat) / est.beatsPerBar + 1));
+
         for (const auto& [layer, count] : perLayer)
         {
             const auto out = midiDir.getChildFile (atm::layerMidiFileName (audio.fileName, layer));
-            if (! atm::writeMidiFile (atm::buildLayerMidi (notes, layer, bpm), out))
+            if (! atm::writeMidiFile (atm::buildLayerMidi (notes, layer, timing), out))
             {
                 print ("midi:     couldn't write " + out.getFullPathName());
                 allOk = false;
@@ -217,10 +297,12 @@ int main (int argc, char* argv[])
                 if (track->getEventPointer (e)->message.isNoteOn())
                     got.push_back (track->getEventPointer (e)->message.getTimeStamp());
 
+            // Where each onset should land, in the file's seconds (its tempo
+            // meta is the host tempo, which convertTimestampTicksToSeconds used).
             std::vector<double> want;
             for (const auto& note : notes)
                 if (atm::layerKeyFor (note) == layer)
-                    want.push_back (note.onset);
+                    want.push_back (juce::jmax (0.0, atm::tickFor (note.onset, timing)) / atm::kTicksPerQuarter * 60.0 / bpm);
 
             std::sort (got.begin(), got.end());
             std::sort (want.begin(), want.end());

@@ -37,6 +37,23 @@ struct TranscriptionState
     }
 };
 
+/** The tempo the export grid uses: detected by the worker, editable here. */
+struct TempoState
+{
+    bool hasEstimate = false;
+    atm::TempoEstimate detected;
+    double bpm = 120.0;          // what the user sees; follows `detected` until edited
+    bool userEdited = false;
+
+    /** The detected grid with the user's tempo applied. */
+    atm::TempoEstimate effective() const noexcept
+    {
+        auto t = detected;
+        t.bpm = bpm;
+        return t;
+    }
+};
+
 //==============================================================================
 /**
     The instrument plugin. Owns the dropped audio and its transcription;
@@ -123,6 +140,14 @@ public:
     atm::ModelDownloader& getDownloader() noexcept { return *downloader; }
 
     //==========================================================================
+    // Tempo. Message thread only.
+
+    const TempoState& getTempo() const noexcept { return tempo; }
+    void setBpm (double bpm);
+    void halveTempo();
+    void doubleTempo();
+
+    //==========================================================================
     // Editor size, saved with the session but recorded only on a real corner
     // drag (see the editor's SizeMemoryConstrainer). 0 = never resized.
     int lastEditorWidth = 0, lastEditorHeight = 0;
@@ -132,6 +157,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
     void onJobProgress (int generation, atm::Phase, float progress);
+    void onJobTempo (int generation, atm::TempoEstimate);
     void onJobNotes (int generation, std::vector<msl::Note> newNotes, double finalizedThrough);
     void onJobFinished (int generation, atm::Outcome, juce::String error, juce::String device);
 
@@ -140,6 +166,7 @@ private:
     std::atomic<int> loadGeneration { 0 };
 
     TranscriptionState transcription;
+    TempoState tempo;
     std::atomic<double> hostBpm { 120.0 };
     std::shared_ptr<atm::TranscriptionJob> job;
     int jobGeneration = 0;   // a callback from an older job is ignored

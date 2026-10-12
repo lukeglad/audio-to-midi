@@ -5,6 +5,7 @@
 
 #include "../SourceAudio.h"
 #include "ModelFiles.h"
+#include "Tempo.h"
 
 #include <atomic>
 #include <deque>
@@ -35,6 +36,11 @@ struct TranscriptionJob
     bool forceCpu = false;
 
     std::function<void (Phase, float progress)> onProgress;
+
+    /** Twice per job: from the audio alone (its first minute) before the
+        model loads, so a grid shows early, then refined with the notes once
+        the transcription finishes. */
+    std::function<void (TempoEstimate)> onTempo;
 
     /** Notes finalised since the last call, and the time below which the
         transcription is now complete. Each note arrives exactly once. */

@@ -143,6 +143,8 @@ void AudioToMidiProcessor::startTranscription()
     transcription = {};
     transcription.model = atm::preferredModel();
 
+    tempo = {};   // a new run gets a fresh tempo
+
     if (source == nullptr)
     {
         sendChangeMessage();
@@ -172,6 +174,14 @@ void AudioToMidiProcessor::startTranscription()
         {
             if (auto* self = weakThis.get())
                 self->onJobProgress (generation, phase, progress);
+        });
+    };
+    job->onTempo = [weakThis, generation] (atm::TempoEstimate estimate)
+    {
+        juce::MessageManager::callAsync ([weakThis, generation, estimate]
+        {
+            if (auto* self = weakThis.get())
+                self->onJobTempo (generation, estimate);
         });
     };
     job->onNotes = [weakThis, generation] (std::vector<msl::Note> newNotes, double finalizedThrough)
@@ -292,6 +302,59 @@ void AudioToMidiProcessor::onJobProgress (int generation, atm::Phase phase, floa
 
     transcription.progress = progress;
     sendChangeMessage();
+}
+
+void AudioToMidiProcessor::onJobTempo (int generation, atm::TempoEstimate estimate)
+{
+    if (generation != jobGeneration)
+        return;
+
+    tempo.detected = estimate;
+    tempo.hasEstimate = true;
+    if (! tempo.userEdited)
+        tempo.bpm = estimate.bpm;
+
+    sendChangeMessage();
+}
+
+//==============================================================================
+void AudioToMidiProcessor::setBpm (double bpm)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    tempo.bpm = juce::jlimit (20.0, 400.0, bpm);
+    tempo.userEdited = true;
+    sendChangeMessage();
+}
+
+void AudioToMidiProcessor::halveTempo()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    // Every other beat remains. If the downbeat was on an odd beat, shift the
+    // grid by one old beat so it stays on the grid.
+    auto& d = tempo.detected;
+    const double oldBeat = 60.0 / tempo.bpm;
+    if (d.downbeat % 2 != 0)
+    {
+        d.firstBeat += oldBeat;
+        d.downbeat = (d.downbeat - 1) / 2;
+    }
+    else
+    {
+        d.downbeat /= 2;
+    }
+
+    setBpm (tempo.bpm * 0.5);
+}
+
+void AudioToMidiProcessor::doubleTempo()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    auto& d = tempo.detected;
+    d.downbeat = (d.downbeat * 2) % d.beatsPerBar;
+    setBpm (tempo.bpm * 2.0);
 }
 
 void AudioToMidiProcessor::onJobNotes (int generation, std::vector<msl::Note> newNotes, double finalizedThrough)

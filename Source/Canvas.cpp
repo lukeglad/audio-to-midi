@@ -111,6 +111,19 @@ void Canvas::setStatus (const Status& newStatus)
     repaint (bandArea());
 }
 
+void Canvas::setGrid (std::optional<atm::TempoEstimate> newGrid)
+{
+    const bool same = grid.has_value() == newGrid.has_value()
+        && (! grid.has_value()
+            || (juce::exactlyEqual (grid->bpm, newGrid->bpm) && juce::exactlyEqual (grid->firstBeat, newGrid->firstBeat)
+                && grid->downbeat == newGrid->downbeat && grid->beatsPerBar == newGrid->beatsPerBar));
+    if (same)
+        return;
+
+    grid = newGrid;
+    repaint (rollArea());
+}
+
 void Canvas::setProgressTime (double seconds)
 {
     if (juce::exactlyEqual (seconds, progressTime))
@@ -382,6 +395,7 @@ void Canvas::paint (juce::Graphics& g)
     g.fillRect (bounds);
 
     paintRoll (g);
+    paintGrid (g);
     paintNotes (g);
     paintKeys (g);
     paintWaveform (g);
@@ -527,6 +541,52 @@ void Canvas::paintRoll (juce::Graphics& g) const
         {
             g.setColour (LnF::ink().withAlpha (kAlphaGrid));
             g.drawHorizontalLine (juce::roundToInt (y + rowH), area.getX(), area.getRight());
+        }
+    }
+}
+
+void Canvas::paintGrid (juce::Graphics& g) const
+{
+    if (! grid.has_value() || source == nullptr || source->getLengthSeconds() <= 0.0)
+        return;
+
+    const auto area = notesArea().toFloat();
+    const double length = source->getLengthSeconds();
+    const double beat = grid->beatSeconds();
+    const float beatPx = (float) beat * (timeToX (length) - timeToX (0.0)) / (float) length;
+
+    // Beats only when they have room to read as a grid; bars always.
+    const bool drawBeats = beatPx >= 7.0f;
+    const bool drawNumbers = beatPx * (float) grid->beatsPerBar >= 26.0f;
+
+    const int firstK = (int) std::floor (-grid->firstBeat / beat);
+    const int lastK  = (int) std::ceil ((length - grid->firstBeat) / beat);
+
+    g.setFont (LnF::uiFont (11.0f));
+
+    for (int k = firstK; k <= lastK; ++k)
+    {
+        const double t = grid->beatTime (k);
+        if (t < 0.0 || t > length)
+            continue;
+
+        const int fromDownbeat = k - grid->downbeat;
+        const bool bar = ((fromDownbeat % grid->beatsPerBar) + grid->beatsPerBar) % grid->beatsPerBar == 0;
+        if (! bar && ! drawBeats)
+            continue;
+
+        const float x = timeToX (t);
+        g.setColour (LnF::ink().withAlpha (bar ? kAlphaDivider : 0.06f));
+        g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
+
+        // Bar 1 is the first downbeat; anything before it is a pickup and
+        // goes unnumbered.
+        const int barNumber = fromDownbeat / grid->beatsPerBar + 1;
+        if (bar && drawNumbers && fromDownbeat >= 0)
+        {
+            g.setColour (LnF::ink().withAlpha (0.30f));
+            g.drawText (juce::String (barNumber), juce::Rectangle<float> (x + 3.0f, area.getBottom() - 15.0f, 40.0f, 13.0f),
+                        juce::Justification::centredLeft, false);
         }
     }
 }

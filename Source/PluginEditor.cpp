@@ -30,6 +30,9 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     content.addAndMakeVisible (topBar);
 
     topBar.onModelClicked = [this] { showModelMenu(); };
+    topBar.onBpmChanged = [this] (double bpm) { processorRef.setBpm (bpm); };
+    topBar.onHalve  = [this] { processorRef.halveTempo(); };
+    topBar.onDouble = [this] { processorRef.doubleTempo(); };
     canvas.onAction = [this]
     {
         if (processorRef.getTranscription().isRunning())
@@ -175,6 +178,10 @@ void AudioToMidiEditor::refreshFromProcessor()
 
     canvas.setSource (source);
     canvas.setTranscription (processorRef.getTranscriptionRun(), t.notes);
+
+    const auto& tempo = processorRef.getTempo();
+    topBar.setTempo (tempo.hasEstimate && source != nullptr, tempo.bpm);
+    canvas.setGrid (tempo.hasEstimate && source != nullptr ? std::optional (tempo.effective()) : std::nullopt);
     canvas.setLoadStatus (processorRef.getLoadingFileName(), processorRef.getLoadError());
 
     if (source != nullptr)
@@ -328,7 +335,14 @@ void AudioToMidiEditor::showModelMenu()
 //==============================================================================
 juce::File AudioToMidiEditor::writeLayerMidi (int layerKey, const juce::File& destination) const
 {
-    const auto midi = atm::buildLayerMidi (processorRef.getTranscription().notes, layerKey, processorRef.getHostBpm());
+    const auto& tempo = processorRef.getTempo();
+    atm::ExportTiming timing;
+    timing.hostBpm = processorRef.getHostBpm();
+    timing.conform = tempo.hasEstimate;   // always, once a tempo exists
+    timing.tempo   = tempo.effective();
+    timing.earliestOnset = atm::earliestOnsetOf (processorRef.getTranscription().notes);
+
+    const auto midi = atm::buildLayerMidi (processorRef.getTranscription().notes, layerKey, timing);
     return atm::writeMidiFile (midi, destination) ? destination : juce::File();
 }
 

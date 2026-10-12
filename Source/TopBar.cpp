@@ -7,6 +7,7 @@ namespace
 {
     constexpr float kTextSize = 14.0f;
     constexpr int   kSideInset = 10;
+    constexpr int   kGroupGap = 6;
 
     juce::String formatLength (double seconds)
     {
@@ -48,6 +49,29 @@ TopBar::TopBar()
     modelButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     modelButton.onClick = [this] { if (onModelClicked) onModelClicked(); };
     addAndMakeVisible (modelButton);
+
+    // Tempo: 20-400 BPM, a quarter of a BPM per pixel (shift for a fortieth).
+    bpmValue.setRange (20.0, 400.0, 0.25);
+    bpmValue.format = [] (double bpm)
+    {
+        // Whole numbers stay whole; a detected 92.35 shows as such.
+        const bool whole = std::abs (bpm - std::round (bpm)) < 0.005;
+        return (whole ? juce::String (juce::roundToInt (bpm)) : juce::String (bpm, 2)) + " BPM";
+    };
+    bpmValue.parse = [] (const juce::String& text)
+    {
+        const auto digits = text.retainCharacters ("0123456789.");
+        return digits.isEmpty() ? std::numeric_limits<double>::quiet_NaN() : digits.getDoubleValue();
+    };
+    bpmValue.onValueChanged = [this] (double bpm) { if (onBpmChanged) onBpmChanged (bpm); };
+    bpmValue.setFont (LnF::uiFont (kTextSize));
+    addChildComponent (bpmValue);
+
+    halfChip.onClick   = [this] { if (onHalve)  onHalve(); };
+    doubleChip.onClick = [this] { if (onDouble) onDouble(); };
+
+    for (auto* chip : { &halfChip, &doubleChip })
+        addChildComponent (chip);
 }
 
 void TopBar::setFile (const juce::String& name, double seconds)
@@ -70,10 +94,34 @@ void TopBar::setModelLabel (const juce::String& label)
     modelButton.repaint();
 }
 
+void TopBar::setTempo (bool has, double bpm)
+{
+    hasTempo = has;
+
+    for (auto* c : std::initializer_list<juce::Component*> { &bpmValue, &halfChip, &doubleChip })
+        c->setVisible (has);
+
+    if (! bpmValue.isBeingEdited())
+        bpmValue.setValue (bpm, juce::dontSendNotification);
+
+    resized();   // the readout's width follows its text
+}
+
 void TopBar::resized()
 {
     modelButton.setBounds (getLocalBounds().removeFromRight (modelButton.getIdealWidth() + kSideInset)
                                .withTrimmedRight (kSideInset));
+
+    auto left = getLocalBounds().withTrimmedLeft (kSideInset);
+    const int bpmW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), bpmValue.getText())) + 6;
+    bpmValue.setBounds (left.removeFromLeft (bpmW));
+    left.removeFromLeft (kGroupGap);
+
+    for (auto* chip : { &halfChip, &doubleChip })
+    {
+        chip->setBounds (left.removeFromLeft (chip->getIdealWidth()).withSizeKeepingCentre (chip->getIdealWidth(), Chip::kHeight));
+        left.removeFromLeft (kGroupGap);
+    }
 }
 
 void TopBar::paint (juce::Graphics& g)
@@ -83,13 +131,16 @@ void TopBar::paint (juce::Graphics& g)
 
     // Name at full ink, length dimmed after it, the pair centred on the bar
     // the way EQ centres its preset name. Measured in the same 14 px face,
-    // so a long name is cut with an ellipsis rather than pushing the length
-    // off the bar or under the model control.
+    // so a long name is cut with an ellipsis rather than running into the
+    // controls either side.
     const auto font = LnF::uiFont (kTextSize);
     const auto length = formatLength (lengthSeconds);
     const float gapW    = juce::GlyphArrangement::getStringWidth (font, "  ");
     const float lengthW = juce::GlyphArrangement::getStringWidth (font, length);
-    const float sideReserve = (float) (modelButton.getWidth() + kSideInset * 2);
+
+    const float leftReserve  = hasTempo ? (float) (doubleChip.getRight() + kSideInset) : (float) kSideInset;
+    const float rightReserve = (float) (getWidth() - modelButton.getX() + kSideInset);
+    const float sideReserve  = juce::jmax (leftReserve, rightReserve);
     const float maxNameW = juce::jmax (0.0f, (float) getWidth() - 2.0f * sideReserve - gapW - lengthW);
     const float nameW   = juce::jmin (maxNameW, juce::GlyphArrangement::getStringWidth (font, fileName) + 1.0f);
 

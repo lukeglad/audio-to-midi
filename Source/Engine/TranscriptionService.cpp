@@ -126,6 +126,14 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     if (job.cancelled)
         return finish (Outcome::cancelled, {}, {});
 
+    // A first tempo from the audio's opening minute: cheap, and it puts the
+    // beat grid on screen before the model has even loaded.
+    if (job.onTempo)
+    {
+        const size_t firstMinute = juce::jmin (samples.size(), (size_t) (60 * msl::Transcriber::SAMPLE_RATE));
+        job.onTempo (estimateTempo (std::span<const float> (samples.data(), firstMinute), {}, shouldCancel));
+    }
+
     // 2. Load. The first availableDevices() call in the process initialises
     //    Metal; with precompiled shaders that is under 100 ms.
     progress (Phase::loadingModel, -1.0f);
@@ -163,8 +171,12 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     // threads: ggml would otherwise take every performance core.
     options.n_threads = juce::jmax (2, juce::SystemStats::getNumPhysicalCpus() - 2);
 
+    std::vector<msl::Note> allNotes;   // for the refined tempo estimate
+
     const msl::NoteCallback callback = [&] (const msl::TranscriptionUpdate& update)
     {
+        allNotes.insert (allNotes.end(), update.new_notes.begin(), update.new_notes.end());
+
         if (job.onNotes && (! update.new_notes.empty() || update.finalized_through > 0.0))
             job.onNotes (std::vector<msl::Note> (update.new_notes.begin(), update.new_notes.end()),
                          update.finalized_through);
@@ -184,6 +196,11 @@ void TranscriptionService::runJob (TranscriptionJob& job)
         juce::Logger::writeToLog ("transcription: failed: " + error);
         return finish (Outcome::failed, error, device);
     }
+
+    // The refined tempo: the whole file, with the notes sharpening the onsets
+    // and deciding the downbeat.
+    if (job.onTempo && ! job.cancelled)
+        job.onTempo (estimateTempo (samples, allNotes, shouldCancel));
 
     // Every note was already delivered through the callback; the return value
     // is the same list joined. The model is released when `transcriber` goes.

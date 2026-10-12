@@ -2,6 +2,9 @@
 
 #include <JuceHeader.h>
 #include <muscriptor/note.hpp>
+#include <optional>
+
+#include "Engine/Tempo.h"
 
 #include "Chip.h"
 #include "LayerChip.h"
@@ -49,6 +52,10 @@ public:
     /** Where the transcription has got to, in seconds; negative hides the line. */
     void setProgressTime (double seconds);
 
+    /** The beat grid drawn through the roll (faint beats, stronger bars, bar
+        numbers along the bottom). Empty hides it. */
+    void setGrid (std::optional<atm::TempoEstimate>);
+
     /** The current run's notes, append-only within a run. A new `runId`
         clears the layers, selection and pitch range. Cheap to call often:
         only notes past the ones already seen are processed. */
@@ -90,6 +97,7 @@ private:
     void paintWaveform (juce::Graphics&) const;
     void paintRuler (juce::Graphics&) const;
     void paintRoll (juce::Graphics&) const;
+    void paintGrid (juce::Graphics&) const;
     void paintKeys (juce::Graphics&) const;
     void paintNotes (juce::Graphics&) const;
     void paintHoverInfo (juce::Graphics&) const;
@@ -113,6 +121,7 @@ private:
     juce::Typeface::Ptr wordmarkTypeface;
     Status status;
     double progressTime = -1.0;
+    std::optional<atm::TempoEstimate> grid;
     Chip actionChip;
 
     int runId = -1;

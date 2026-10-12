@@ -46,6 +46,7 @@ set (ENGINE_SOURCES
     Source/Engine/ModelDownloader.cpp
     Source/Engine/ModelFiles.cpp
     Source/Engine/Resampler.cpp
+    Source/Engine/Tempo.cpp
     Source/Engine/TranscriptionService.cpp
     Source/SourceAudio.cpp)
 
@@ -85,6 +86,7 @@ target_sources (AudioToMidi PRIVATE
     Source/AudioFlowerLookAndFeel.cpp
     Source/Canvas.cpp
     Source/Chip.cpp
+    Source/DragValue.cpp
     Source/LayerChip.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp

@@ -3,6 +3,8 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <muscriptor/note.hpp>
 
+#include "Tempo.h"
+
 #include <vector>
 
 namespace atm
@@ -27,23 +29,51 @@ namespace atm
     //==========================================================================
     // MIDI.
 
-    /** Shortest note written, in ticks at 960 per quarter: a 1/32 note. Drum
-        hits arrive 10 ms long and would be invisible slivers in a piano roll. */
     inline constexpr int kTicksPerQuarter = 960;
+
+    /** Shortest note written: a 1/32 note. Drum hits arrive 10 ms long and
+        would be invisible slivers in a piano roll. */
     inline constexpr int kMinNoteTicks = kTicksPerQuarter / 8;
 
-    /** Until velocity measurement exists (build step 4). */
+    /** Until velocity measurement exists (build step 4b). */
     inline constexpr juce::uint8 kFixedVelocity = 100;
 
     /**
-        One layer's notes as a single-track MIDI file. Seconds convert to ticks
-        at `bpm`, so with the host's tempo the clip lines up with the original
-        audio in real time; tick 0 is the start of the audio (leading silence
-        is kept). Drums go on channel 10, everything else on channel 1 with
-        the GM program the model decoded. Same-pitch notes never overlap: a
-        note is cut where the next one on its pitch starts.
+        How seconds become ticks.
+
+        Normally (conform on) the detected grid's beats become the file's
+        beats, so the DAW plays the part at its own tempo and on its grid.
+        Conform off is only the fallback for when no tempo exists yet: real
+        time at the host's tempo, tick 0 at the start of the audio.
+
+        With conform on, A lead-in of whole beats puts the
+        first downbeat on a bar line and keeps every note at or after tick 0.
+        A file whose notes start on its first downbeat starts at bar 1; only a
+        real pickup (notes before that downbeat) pushes it into the next bar.
     */
-    juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layerKey, double bpm);
+    struct ExportTiming
+    {
+        double hostBpm = 120.0;
+        bool conform = false;
+        TempoEstimate tempo;        // with the user's edits applied
+        double earliestOnset = 0.0; // seconds; the first note of the whole transcription
+
+        /** Beats of lead-in before the grid's beat 0, when conforming. */
+        int leadInBeats() const noexcept;
+    };
+
+    /** The earliest onset in `notes`, or 0 with none. */
+    double earliestOnsetOf (const std::vector<msl::Note>& notes) noexcept;
+
+    double tickFor (double seconds, const ExportTiming&);
+
+    /**
+        One layer's notes as a single-track MIDI file. Drums go on channel 10,
+        everything else on channel 1 with the GM program the model decoded.
+        Same-pitch notes never overlap: a note is cut where the next one on
+        its pitch starts.
+    */
+    juce::MidiFile buildLayerMidi (const std::vector<msl::Note>& allNotes, int layerKey, const ExportTiming&);
 
     /** Writes `midi` to `file`, replacing it. */
     bool writeMidiFile (const juce::MidiFile& midi, const juce::File& file);
