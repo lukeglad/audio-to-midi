@@ -14,13 +14,21 @@
     Usage in a new project:
       1. Copy AudioFlowerLookAndFeel.{h,cpp} + AudioFlowerIcons.h into Source/.
       2. Embed IBMPlexMono-Regular.ttf as a binary resource (Projucer:
-         Resources group, resource="1"), then ONCE at editor construction:
+         Resources group, resource="1"), then inject it while an editor
+         exists and RELEASE it when the last editor goes:
             AudioFlowerLookAndFeel::setUiTypeface (
                 juce::Typeface::createSystemTypefaceFor (
                     BinaryData::IBMPlexMonoRegular_ttf,
                     (size_t) BinaryData::IBMPlexMonoRegular_ttfSize));
-         Skip that and uiFont() falls back to a system monospace, which
-         works but isn't the brand face.
+            ... and later: AudioFlowerLookAndFeel::setUiTypeface (nullptr);
+         The tidy way is a small holder struct owned by each editor through
+         juce::SharedResourcePointer (ctor injects, dtor clears). Do NOT just
+         inject once and forget: the Typeface then lives in this class's
+         static until process exit / plugin unload, is destroyed after
+         CoreText has shut down, and that ABORTS the host (seen 2026-10-12:
+         "quit unexpectedly" on every quit of the standalone and of FL).
+         Skip the injection entirely and uiFont() falls back to a system
+         monospace, which works but isn't the brand face.
       3. Add a member: AudioFlowerLookAndFeel lookAndFeel;
       4. Constructor: setLookAndFeel (&lookAndFeel);  Destructor: setLookAndFeel (nullptr);
 

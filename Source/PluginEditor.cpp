@@ -17,9 +17,7 @@ namespace
 AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     : AudioProcessorEditor (p), processorRef (p)
 {
-    // House face for every bit of UI text (see AudioFlowerLookAndFeel.h).
-    AudioFlowerLookAndFeel::setUiTypeface (juce::Typeface::createSystemTypefaceFor (
-        BinaryData::IBMPlexMonoRegular_ttf, (size_t) BinaryData::IBMPlexMonoRegular_ttfSize));
+    // The house face was injected by `houseFonts` (see the header).
     setLookAndFeel (&lookAndFeel);
 
     canvas.setWordmarkTypeface (juce::Typeface::createSystemTypefaceFor (

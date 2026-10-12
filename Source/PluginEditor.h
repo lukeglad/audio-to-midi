@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "AudioFlowerLookAndFeel.h"
+#include "BinaryData.h"
 #include "Canvas.h"
 #include "PluginProcessor.h"
 #include "TopBar.h"
@@ -67,6 +68,22 @@ private:
     };
 
     AudioToMidiProcessor& processorRef;
+
+    // The house typeface, injected into the LookAndFeel while any editor
+    // exists and released when the last one goes. Held through a
+    // SharedResourcePointer rather than left in the LookAndFeel's static:
+    // a Typeface that survives to process exit (or plugin unload) is torn
+    // down after CoreText is, and that aborts the host.
+    struct HouseFonts
+    {
+        HouseFonts()
+        {
+            AudioFlowerLookAndFeel::setUiTypeface (juce::Typeface::createSystemTypefaceFor (
+                BinaryData::IBMPlexMonoRegular_ttf, (size_t) BinaryData::IBMPlexMonoRegular_ttfSize));
+        }
+        ~HouseFonts() { AudioFlowerLookAndFeel::setUiTypeface (nullptr); }
+    };
+    juce::SharedResourcePointer<HouseFonts> houseFonts;
 
     // Declared before every component that uses it, so it outlives them.
     AudioFlowerLookAndFeel lookAndFeel;
