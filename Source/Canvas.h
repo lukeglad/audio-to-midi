@@ -66,6 +66,20 @@ public:
     /** Lines per beat drawn between the beat lines: the quantize grid. */
     void setGridDivisions (int);
 
+    /** The preview playhead, in seconds; negative hides it. Copper: the
+        brief's second reserved role for the accent. */
+    void setPlayhead (double seconds);
+
+    /** Preview state per layer, read when painting and refreshing chips. */
+    std::function<bool (int layer)> isLayerMuted, isLayerSoloed, isLayerAudible;
+    std::function<void (int layer)> onMuteToggled, onSoloToggled;
+
+    /** Click in the waveform band or ruler: locate the preview. */
+    std::function<void (double seconds)> onSeek;
+
+    /** Re-reads the preview state into the chips and the roll. */
+    void refreshPreviewState();
+
     std::function<void()> onAction;
 
     /** Writes a layer's MIDI for a drag and returns the file. */
@@ -78,6 +92,7 @@ public:
     void resized() override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
@@ -95,6 +110,7 @@ private:
     juce::Rectangle<int> rollArea() const;      // keys + notes
     juce::Rectangle<int> notesArea() const;     // roll minus keys
     float timeToX (double seconds) const;
+    double xToTime (float x) const;
     float pitchTop (int pitch) const;
     float rowHeight() const;
     juce::Rectangle<float> noteBounds (const atm::MidiNote&) const;
@@ -127,6 +143,7 @@ private:
     juce::Typeface::Ptr wordmarkTypeface;
     Status status;
     double progressTime = -1.0;
+    double playheadTime = -1.0;
     std::optional<atm::TempoEstimate> grid;
     int gridDivisions = 4;   // lines per beat: the quantize grid (1/16 = 4)
     Chip actionChip;

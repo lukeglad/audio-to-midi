@@ -41,6 +41,17 @@ int TopBar::MenuButton::getIdealWidth() const
     return juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), getButtonText())) + 16;
 }
 
+void TopBar::PlayButton::paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown)
+{
+    auto* icon = playing ? stopIcon.get() : playIcon.get();
+    if (icon == nullptr)
+        return;
+
+    const float alpha = (isMouseOver || isButtonDown) ? 1.0f : 0.75f;
+    icon->drawWithin (g, getLocalBounds().toFloat().withSizeKeepingCentre (14.0f, 14.0f),
+                      juce::RectanglePlacement::centred, alpha);
+}
+
 //==============================================================================
 TopBar::TopBar()
 {
@@ -49,6 +60,22 @@ TopBar::TopBar()
     modelButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     modelButton.onClick = [this] { if (onModelClicked) onModelClicked(); };
     addAndMakeVisible (modelButton);
+
+    playButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    playButton.onClick = [this] { if (onPlayClicked) onPlayClicked(); };
+    addChildComponent (playButton);
+
+    // Mix: 0 = the original audio, 100 = the synth, read as "mix 50%".
+    mixValue.setRange (0.0, 100.0, 0.5);
+    mixValue.format = [] (double v) { return "mix " + juce::String (juce::roundToInt (v)) + "%"; };
+    mixValue.parse = [] (const juce::String& text)
+    {
+        const auto digits = text.retainCharacters ("0123456789.");
+        return digits.isEmpty() ? std::numeric_limits<double>::quiet_NaN() : digits.getDoubleValue();
+    };
+    mixValue.onValueChanged = [this] (double v) { if (onMixChanged) onMixChanged ((float) (v / 100.0)); };
+    mixValue.setFont (LnF::uiFont (kTextSize));
+    addChildComponent (mixValue);
 
     // Tempo: 20-400 BPM, a quarter of a BPM per pixel (shift for a fortieth).
     bpmValue.setRange (20.0, 400.0, 0.25);
@@ -123,6 +150,23 @@ void TopBar::setTempo (bool has, double bpm)
     resized();   // the readout's width follows its text
 }
 
+void TopBar::setTransport (bool has, bool playing, float mix01)
+{
+    hasFile = has;
+    playButton.setVisible (has);
+    mixValue.setVisible (has);
+
+    if (playing != playButton.playing)
+    {
+        playButton.playing = playing;
+        playButton.repaint();
+    }
+    if (! mixValue.isBeingEdited())
+        mixValue.setValue (mix01 * 100.0, juce::dontSendNotification);
+
+    resized();
+}
+
 void TopBar::setQuantize (double amount01, atm::Grid newGrid)
 {
     if (! quantizeValue.isBeingEdited())
@@ -157,6 +201,17 @@ void TopBar::resized()
                                .withTrimmedRight (kSideInset));
 
     auto left = getLocalBounds().withTrimmedLeft (kSideInset);
+
+    // The transport first; the tempo group a wider gap on from it.
+    if (hasFile)
+    {
+        playButton.setBounds (left.removeFromLeft (16));
+        left.removeFromLeft (kGroupGap);
+        const int mixW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), mixValue.getText())) + 6;
+        mixValue.setBounds (left.removeFromLeft (mixW));
+        left.removeFromLeft (kGroupGap * 2);
+    }
+
     const int bpmW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), bpmValue.getText())) + 6;
     bpmValue.setBounds (left.removeFromLeft (bpmW));
     left.removeFromLeft (kGroupGap);
@@ -191,7 +246,7 @@ void TopBar::paint (juce::Graphics& g)
 
     // Centred on the bar when it fits, otherwise centred in the space left
     // between the controls either side, the name cut with an ellipsis.
-    const float leftEdge  = (float) (hasTempo ? gridButton.getRight() : 0) + (float) kSideInset;
+    const float leftEdge  = (float) (hasTempo ? gridButton.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
     const float rightEdge = (float) (modelButton.getX() - kSideInset);
     const float maxNameW  = juce::jmax (0.0f, rightEdge - leftEdge - gapW - lengthW);
     const float nameW     = juce::jmin (maxNameW, juce::GlyphArrangement::getStringWidth (font, fileName) + 1.0f);

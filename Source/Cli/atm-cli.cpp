@@ -2,7 +2,7 @@
 // code the plugin uses.
 //
 //   atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]
-//           [--quantize PCT] [--grid 4|8|16]
+//           [--quantize PCT] [--grid 4|8|16] [--preview-render OUT.wav]
 //
 // Prints the device the model ran on, timings, a per-instrument count and
 // the first N notes (default 20). --midi writes one .mid per layer into DIR,
@@ -19,6 +19,7 @@
 #include "Engine/Cleanup.h"
 #include "Engine/MidiExport.h"
 #include "Engine/ModelFiles.h"
+#include "Engine/Preview.h"
 #include "Engine/Resampler.h"
 #include "Engine/Tempo.h"
 #include "Engine/Velocity.h"   // research only; not in the plugin
@@ -36,7 +37,7 @@ namespace
     int usage()
     {
         print ("usage: atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]");
-        print ("               [--quantize PCT] [--grid 4|8|16]");
+        print ("               [--quantize PCT] [--grid 4|8|16] [--preview-render OUT.wav]");
         print ("       atm-cli --resample-check     (alignment test, no model needed)");
         print ("       atm-cli --tempo-check        (synthetic click tracks, no model needed)");
         print ("       atm-cli --velocity-check     (synthetic tones at known levels, no model needed)");
@@ -218,6 +219,7 @@ int main (int argc, char* argv[])
     juce::File midiDir;
     double bpm = 120.0;
     atm::CleanupSettings cleanup;
+    juce::File previewOut;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -231,6 +233,8 @@ int main (int argc, char* argv[])
             midiDir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[++i]);
         else if (arg == "--bpm" && i + 1 < argc)
             bpm = juce::String (argv[++i]).getDoubleValue();
+        else if (arg == "--preview-render" && i + 1 < argc)
+            previewOut = juce::File::getCurrentWorkingDirectory().getChildFile (argv[++i]);
         else if (arg == "--quantize" && i + 1 < argc)
             cleanup.quantize = juce::String (argv[++i]).getDoubleValue() / 100.0;
         else if (arg == "--grid" && i + 1 < argc)
@@ -354,7 +358,67 @@ int main (int argc, char* argv[])
     timing.tempo = est;
     timing.earliestOnset = atm::earliestOnsetOf (cleaned);
 
-    // 6. MIDI per layer, read back to check the timing survives the round trip.
+    // 6. Preview: render the synth (mix 100%) offline through the same
+    //    class the plugin plays with, and check it made sound where the notes
+    //    are and nothing else.
+    if (previewOut != juce::File())
+    {
+        constexpr double rate = 48000.0;
+        constexpr int block = 512;
+        atm::Preview preview;
+        preview.prepare (rate, block);
+        preview.setSource (decoded.audio);
+        preview.setNotes (cleaned);
+        preview.setMix (1.0f);
+        preview.play();
+
+        const int total = (int) ((audio.getLengthSeconds() + 1.0) * rate);
+        juce::AudioBuffer<float> rendered (2, total);
+        rendered.clear();
+        juce::AudioBuffer<float> chunk (2, block);
+        int written = 0;
+        while (written < total && preview.isPlaying())
+        {
+            preview.render (chunk);
+            const int n = juce::jmin (block, total - written);
+            for (int ch = 0; ch < 2; ++ch)
+                rendered.copyFrom (ch, written, chunk, ch, 0, n);
+            written += n;
+        }
+
+        int firstLoud = -1;
+        bool finite = true;
+        float peak = 0.0f;
+        for (int i = 0; i < written; ++i)
+        {
+            const float v = rendered.getSample (0, i);
+            finite = finite && std::isfinite (v);
+            peak = juce::jmax (peak, std::abs (v));
+            if (firstLoud < 0 && std::abs (v) > 0.01f)
+                firstLoud = i;
+        }
+
+        const double firstOnset = atm::earliestOnsetOf (cleaned);
+        const double firstSound = firstLoud >= 0 ? firstLoud / rate : -1.0;
+        const bool ok = finite && peak > 0.05f && peak <= 1.0f && firstLoud >= 0 && std::abs (firstSound - firstOnset) < 0.02;
+
+        previewOut.deleteFile();
+        if (std::unique_ptr<juce::OutputStream> stream = previewOut.createOutputStream())
+        {
+            juce::WavAudioFormat wav;
+            if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (rate)
+                                                                                           .withNumChannels (2)
+                                                                                           .withBitsPerSample (16)))
+                writer->writeFromAudioSampleBuffer (rendered, 0, written);
+        }
+
+        print (juce::String::formatted ("preview:  %.1f s rendered, peak %.2f (must be 0.05-1.0), first sound at %.3f s (first note %.3f s)%s: %s",
+                                        written / rate, peak, firstSound, firstOnset, finite ? "" : ", NOT FINITE", ok ? "ok" : "WRONG"));
+        if (! ok)
+            return 1;
+    }
+
+    // 7. MIDI per layer, read back to check the timing survives the round trip.
     if (midiDir != juce::File())
     {
         midiDir.createDirectory();

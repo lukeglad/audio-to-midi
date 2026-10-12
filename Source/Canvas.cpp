@@ -134,6 +134,21 @@ void Canvas::setGrid (std::optional<atm::TempoEstimate> newGrid)
     repaint (rollArea());
 }
 
+void Canvas::setPlayhead (double seconds)
+{
+    if (juce::exactlyEqual (seconds, playheadTime))
+        return;
+
+    playheadTime = seconds;
+    repaint();
+}
+
+void Canvas::refreshPreviewState()
+{
+    refreshLayerStates();
+    repaint (rollArea());
+}
+
 void Canvas::setProgressTime (double seconds)
 {
     if (juce::exactlyEqual (seconds, progressTime))
@@ -253,6 +268,8 @@ Canvas::Layer& Canvas::ensureLayer (int key)
             repaint();
         };
         chip.onContextMenu = [this, key] { showLayerMenu (key); };
+        chip.onMuteToggled = [this, key] { if (onMuteToggled) onMuteToggled (key); };
+        chip.onSoloToggled = [this, key] { if (onSoloToggled) onSoloToggled (key); };
         chip.makeDragFile = [this, key] { return makeLayerMidiFile ? makeLayerMidiFile (key) : juce::File(); };
 
         addAndMakeVisible (chip);
@@ -289,6 +306,8 @@ void Canvas::refreshLayerStates()
     {
         layer.chip->setLit (layer.key == lit);
         layer.chip->setSelected (layer.key == selectedLayer);
+        layer.chip->setMuted (isLayerMuted ? isLayerMuted (layer.key) : false);
+        layer.chip->setSoloed (isLayerSoloed ? isLayerSoloed (layer.key) : false);
     }
 }
 
@@ -324,6 +343,14 @@ float Canvas::timeToX (double seconds) const
         return left;
 
     return left + (right - left) * (float) juce::jlimit (0.0, 1.0, seconds / length);
+}
+
+double Canvas::xToTime (float x) const
+{
+    const float left  = (float) (kKeysW + kTimeInset);
+    const float right = (float) (getWidth() - kTimeInset);
+    const double length = source != nullptr ? source->getLengthSeconds() : 0.0;
+    return length * juce::jlimit (0.0, 1.0, (double) (x - left) / juce::jmax (1.0, (double) (right - left)));
 }
 
 float Canvas::rowHeight() const
@@ -436,6 +463,14 @@ void Canvas::paint (juce::Graphics& g)
     {
         const float x = timeToX (progressTime);
         g.setColour (LnF::ink().withAlpha (kAlphaSecondary));
+        g.drawLine (x, (float) kWaveInsetY, x, bounds.getBottom(), 1.0f);
+    }
+
+    // The playhead: copper, through both sections.
+    if (playheadTime >= 0.0 && source != nullptr)
+    {
+        const float x = timeToX (playheadTime);
+        g.setColour (LnF::accent());
         g.drawLine (x, (float) kWaveInsetY, x, bounds.getBottom(), 1.0f);
     }
 
@@ -689,6 +724,11 @@ void Canvas::paintNotes (juce::Graphics& g) const
 
     const auto colourFor = [&] (int key)
     {
+        // A layer the preview won't play (muted, or another is soloed) ghosts
+        // at the "ghost curve" alpha, whatever else it is.
+        const bool silenced = isLayerAudible && ! isLayerAudible (key);
+        if (silenced && key != lit)
+            return (key == selectedLayer ? LnF::accent() : LnF::ink()).withAlpha (0.16f);
         if (key == selectedLayer)
             return LnF::accent().withAlpha (lit >= 0 && lit != key ? kSelectedRecessed : 1.0f);
         if (key == lit)
@@ -864,6 +904,13 @@ void Canvas::mouseMove (const juce::MouseEvent& e)
     }
 
     setMouseCursor (under >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
+void Canvas::mouseDown (const juce::MouseEvent& e)
+{
+    // The band and the ruler locate the preview; the roll is for notes.
+    if (source != nullptr && onSeek && e.y < rollArea().getY() && e.x >= kKeysW && ! e.mods.isPopupMenu())
+        onSeek (xToTime (e.position.x));
 }
 
 void Canvas::mouseExit (const juce::MouseEvent&)

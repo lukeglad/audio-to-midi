@@ -46,6 +46,7 @@ set (ENGINE_SOURCES
     Source/Engine/MidiExport.cpp
     Source/Engine/ModelDownloader.cpp
     Source/Engine/ModelFiles.cpp
+    Source/Engine/Preview.cpp
     Source/Engine/Resampler.cpp
     Source/Engine/Tempo.cpp
     Source/Engine/TranscriptionService.cpp

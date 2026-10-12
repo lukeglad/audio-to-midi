@@ -20,8 +20,9 @@ AudioToMidiProcessor::~AudioToMidiProcessor()
 }
 
 //==============================================================================
-void AudioToMidiProcessor::prepareToPlay (double, int)
+void AudioToMidiProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    preview.prepare (sampleRate, samplesPerBlock);
 }
 
 bool AudioToMidiProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -41,8 +42,7 @@ void AudioToMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             if (const auto bpm = position->getBpm(); bpm.hasValue() && *bpm > 0.0)
                 hostBpm.store (*bpm, std::memory_order_relaxed);
 
-    // Silent until the preview synth exists (build step 5).
-    buffer.clear();
+    preview.render (buffer);
 }
 
 //==============================================================================
@@ -119,6 +119,7 @@ void AudioToMidiProcessor::finishLoad (int generation, DecodeResult result)
     if (result.audio != nullptr)
     {
         source = std::move (result.audio);
+        preview.setSource (source);
         startTranscription();
     }
     else
@@ -321,6 +322,7 @@ void AudioToMidiProcessor::onJobTempo (int generation, atm::TempoEstimate estima
 void AudioToMidiProcessor::notesChanged()
 {
     ++notesVersion;
+    preview.setNotes (getCleanNotes());
     sendChangeMessage();
 }
 

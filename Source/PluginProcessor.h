@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "Engine/Cleanup.h"
 #include "Engine/ModelDownloader.h"
+#include "Engine/Preview.h"
 #include "Engine/TranscriptionService.h"
 #include "SourceAudio.h"
 
@@ -164,6 +165,12 @@ public:
     int getNotesVersion() const noexcept { return notesVersion; }
 
     //==========================================================================
+    // Preview playback: the original audio and a synth rendering of the
+    // notes, with its own transport. Message-thread calls; it renders itself
+    // in processBlock.
+    atm::Preview& getPreview() noexcept { return preview; }
+
+    //==========================================================================
     // Editor size, saved with the session but recorded only on a real corner
     // drag (see the editor's SizeMemoryConstrainer). 0 = never resized.
     int lastEditorWidth = 0, lastEditorHeight = 0;
@@ -184,6 +191,7 @@ private:
 
     TranscriptionState transcription;
     TempoState tempo;
+    atm::Preview preview;
     atm::CleanupSettings cleanup;
     int notesVersion = 0;
     mutable std::vector<atm::MidiNote> cleanNotes;

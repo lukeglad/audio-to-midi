@@ -22,12 +22,19 @@ public:
     void setSelected (bool);
     void setSurfaceColour (juce::Colour);
 
+    /** Preview state, drawn as the EQ strip's power (mute) and headphones
+        (solo) glyphs at the chip's right: engaged ones always show, resting
+        ones only while the chip is hovered. */
+    void setMuted (bool);
+    void setSoloed (bool);
+
     int getIdealWidth() const;
     static constexpr int kHeight = 20;
 
     std::function<void (bool isHovering)> onHoverChanged;
     std::function<void()> onClick;
     std::function<void()> onContextMenu;
+    std::function<void()> onMuteToggled, onSoloToggled;
 
     /** Writes the layer's MIDI and returns the file to drag, or an invalid
         file to cancel the drag. Called once per drag gesture. */
@@ -41,10 +48,15 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
+    enum class Zone { text, mute, solo };
+    Zone zoneAt (int x) const noexcept;
+
     juce::String name;
-    bool lit = false, selected = false;
+    bool lit = false, selected = false, isMuted = false, isSoloed = false;
     juce::Colour surface;
     bool dragStarted = false, popupGesture = false;
+    Zone pressedZone = Zone::text;
+    std::unique_ptr<juce::Drawable> muteIcon, soloIcon;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LayerChip)
 };

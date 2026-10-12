@@ -43,6 +43,17 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
         settings.grid = grid;
         processorRef.setCleanup (settings);
     };
+
+    // The preview.
+    auto& preview = processorRef.getPreview();
+    topBar.onPlayClicked = [this, &preview] { preview.togglePlay(); refreshFromProcessor(); };
+    topBar.onMixChanged = [&preview] (float mix) { preview.setMix (mix); };
+    canvas.onSeek = [this, &preview] (double seconds) { preview.seek (seconds); refreshFromProcessor(); };
+    canvas.isLayerMuted   = [&preview] (int layer) { return preview.isMuted (layer); };
+    canvas.isLayerSoloed  = [&preview] (int layer) { return preview.isSoloed (layer); };
+    canvas.isLayerAudible = [&preview] (int layer) { return preview.isAudible (layer); };
+    canvas.onMuteToggled = [this, &preview] (int layer) { preview.setMuted (layer, ! preview.isMuted (layer)); canvas.refreshPreviewState(); };
+    canvas.onSoloToggled = [this, &preview] (int layer) { preview.setSoloed (layer, ! preview.isSoloed (layer)); canvas.refreshPreviewState(); };
     canvas.onAction = [this]
     {
         if (processorRef.getTranscription().isRunning())
@@ -175,8 +186,13 @@ void AudioToMidiEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void AudioToMidiEditor::timerCallback()
 {
-    // Download and transcription progress are polled; everything else arrives
-    // as a change message.
+    // Download and transcription progress are polled, as is the playhead;
+    // everything else arrives as a change message. The playhead wants a
+    // smoother rate than the rest.
+    const bool playing = processorRef.getPreview().isPlaying();
+    if (getTimerInterval() != (playing ? 33 : 66))
+        startTimer (playing ? 33 : 66);
+
     refreshFromProcessor();
 }
 
@@ -194,6 +210,10 @@ void AudioToMidiEditor::refreshFromProcessor()
 
     topBar.setQuantize (processorRef.getCleanup().quantize, processorRef.getCleanup().grid);
     canvas.setGridDivisions ((int) processorRef.getCleanup().grid);
+
+    auto& preview = processorRef.getPreview();
+    topBar.setTransport (source != nullptr, preview.isPlaying(), preview.getMix());
+    canvas.setPlayhead (source != nullptr && (preview.isPlaying() || preview.getPosition() > 0.0) ? preview.getPosition() : -1.0);
     canvas.setGrid (tempo.hasEstimate && source != nullptr ? std::optional (tempo.effective()) : std::nullopt);
     canvas.setLoadStatus (processorRef.getLoadingFileName(), processorRef.getLoadError());
 

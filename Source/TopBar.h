@@ -4,12 +4,14 @@
 #include "Chip.h"
 #include "DragValue.h"
 #include "Engine/Cleanup.h"
+#include "AudioFlowerIcons.h"
 
 //==============================================================================
 /**
     The 20 px top bar: the only fixed furniture (house rule). Global things
-    only. Left: the tempo group (BPM readout, half / double) and then the
-    quantize group (amount, grid), both shown once a tempo exists. Centre:
+    only. Left: the preview transport (play / stop, mix), then the tempo
+    group (BPM readout, half / double) and the quantize group (amount, grid),
+    all shown once a file is loaded and a tempo exists. Centre:
     the loaded file's name and length, kept clear of both sides. Right: the
     model control. The "?" guide arrives in a later build step.
 
@@ -30,6 +32,11 @@ public:
     /** The tempo and quantize groups. `hasTempo` false hides both. */
     void setTempo (bool hasTempo, double bpm);
     void setQuantize (double amount01, atm::Grid);
+
+    /** The transport: shown with a file loaded. */
+    void setTransport (bool hasFile, bool playing, float mix01);
+    std::function<void()> onPlayClicked;
+    std::function<void (float)> onMixChanged;   // 0..1
 
     juce::Component& getModelControl() noexcept { return modelButton; }
     std::function<void()> onModelClicked;
@@ -57,6 +64,21 @@ private:
     MenuButton modelButton;
 
     void showGridMenu();
+
+    // Play / stop as the house outline glyphs. Resting 0.75, hovered 1.0.
+    struct PlayButton : juce::Button
+    {
+        PlayButton() : juce::Button ("play"),
+                       playIcon (AudioFlowerIcons::makeTablerIcon (AudioFlowerIcons::kPlay)),
+                       stopIcon (AudioFlowerIcons::makeTablerIcon (AudioFlowerIcons::kStop)) {}
+        void paintButton (juce::Graphics&, bool isMouseOver, bool isButtonDown) override;
+        bool playing = false;
+        std::unique_ptr<juce::Drawable> playIcon, stopIcon;
+    };
+
+    PlayButton playButton;
+    DragValue mixValue;
+    bool hasFile = false;
 
     DragValue bpmValue, quantizeValue;
     MenuButton gridButton;

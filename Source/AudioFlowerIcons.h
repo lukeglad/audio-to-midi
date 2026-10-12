@@ -79,4 +79,8 @@ namespace AudioFlowerIcons
     // x -- delete/close
     static const juce::String kDelete = "<path d=\"M18 6l-12 12\" />"
                                          "<path d=\"M6 6l12 12\" />";
+
+    // player-play / player-stop -- the preview transport
+    static const juce::String kPlay = "<path d=\"M7 4v16l13 -8l-13 -8\" />";
+    static const juce::String kStop = "<path d=\"M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -10\" />";
 }
