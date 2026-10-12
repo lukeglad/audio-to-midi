@@ -105,6 +105,10 @@ public:
         older decode that hasn't finished. Transcription follows automatically. */
     void loadFile (const juce::File& file);
 
+    /** What getStateInformation stores so the audio comes back without the
+        file. Null when the loaded file couldn't be encoded. */
+    std::shared_ptr<const juce::MemoryBlock> getStateAudio() const noexcept { return stateAudio; }
+
     /** The most recently loaded file, or null. Survives a failed or
         in-progress load of a newer one, so a bad drop never loses work. */
     std::shared_ptr<const SourceAudio> getSource() const noexcept { return source; }
@@ -177,6 +181,22 @@ public:
 
 private:
     void finishLoad (int generation, DecodeResult result);
+
+    // A saved session being restored: decoding its audio takes a moment in
+    // the background, and everything else waits for it so a half-restored
+    // plugin is never shown.
+    struct PendingRestore
+    {
+        int generation = 0;
+        std::vector<msl::Note> notes;
+        bool complete = true;
+        TempoState tempo;
+        atm::CleanupSettings cleanup;
+        float mix = 0.5f;
+        std::vector<int> muted, soloed;
+    };
+    std::optional<PendingRestore> pendingRestore;
+    void applyRestore (PendingRestore&&);
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
     void onJobProgress (int generation, atm::Phase, float progress);
@@ -186,6 +206,8 @@ private:
     void onJobFinished (int generation, atm::Outcome, juce::String error, juce::String device);
 
     std::shared_ptr<const SourceAudio> source;
+    std::shared_ptr<const juce::MemoryBlock> stateAudio;
+    juce::String stateAudioExtension;
     juce::String loadingFileName, loadError;
     std::atomic<int> loadGeneration { 0 };
 

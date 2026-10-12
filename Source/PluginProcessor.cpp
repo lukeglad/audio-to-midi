@@ -52,29 +52,203 @@ juce::AudioProcessorEditor* AudioToMidiProcessor::createEditor()
 }
 
 //==============================================================================
+// State: a binary ValueTree (not XML -- the audio would be base64 and a
+// third bigger). Version 2 added the audio, notes, tempo and settings;
+// version 1 held only the editor size.
+
+namespace
+{
+    constexpr int kStateVersion = 2;
+
+    // Notes packed as fixed records, so a song's thousands of notes don't
+    // become thousands of XML nodes.
+    struct PackedNote { double onset, offset; juce::int32 pitch, program; juce::uint8 drum; juce::uint8 pad[7]; };
+    static_assert (sizeof (PackedNote) == 32);
+
+    juce::MemoryBlock packNotes (const std::vector<msl::Note>& notes)
+    {
+        juce::MemoryBlock block (notes.size() * sizeof (PackedNote), true);
+        auto* out = static_cast<PackedNote*> (block.getData());
+        for (size_t i = 0; i < notes.size(); ++i)
+            out[i] = { notes[i].onset, notes[i].offset, notes[i].pitch, notes[i].program, (juce::uint8) (notes[i].is_drum ? 1 : 0), {} };
+        return block;
+    }
+
+    std::vector<msl::Note> unpackNotes (const juce::MemoryBlock& block)
+    {
+        std::vector<msl::Note> notes (block.getSize() / sizeof (PackedNote));
+        const auto* in = static_cast<const PackedNote*> (block.getData());
+        for (size_t i = 0; i < notes.size(); ++i)
+            notes[i] = { in[i].onset, in[i].offset, in[i].pitch, in[i].program, in[i].drum != 0 };
+        return notes;
+    }
+
+    juce::String joinInts (const std::vector<int>& values)
+    {
+        juce::StringArray parts;
+        for (const int v : values)
+            parts.add (juce::String (v));
+        return parts.joinIntoString (" ");
+    }
+
+    std::vector<int> splitInts (const juce::String& text)
+    {
+        std::vector<int> values;
+        for (const auto& part : juce::StringArray::fromTokens (text, " ", {}))
+            if (part.isNotEmpty())
+                values.push_back (part.getIntValue());
+        return values;
+    }
+}
+
 void AudioToMidiProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // Only the editor size so far. Notes and the source audio join this in
-    // build step 6, at which point the format needs a version attribute.
     juce::ValueTree state ("AudioToMidiState");
+    state.setProperty ("version", kStateVersion, nullptr);
     state.setProperty ("editorWidth",  lastEditorWidth,  nullptr);
     state.setProperty ("editorHeight", lastEditorHeight, nullptr);
 
-    if (auto xml = state.createXml())
-        copyXmlToBinary (*xml, destData);
+    if (source != nullptr && stateAudio != nullptr)
+    {
+        juce::ValueTree audio ("audio");
+        audio.setProperty ("name", source->fileName, nullptr);
+        audio.setProperty ("extension", stateAudioExtension, nullptr);
+        audio.setProperty ("bytes", juce::var (*stateAudio), nullptr);
+        state.appendChild (audio, nullptr);
+
+        juce::ValueTree notes ("notes");
+        notes.setProperty ("complete", transcription.phase == TranscriptionPhase::done, nullptr);
+        notes.setProperty ("packed", juce::var (packNotes (transcription.notes)), nullptr);
+        state.appendChild (notes, nullptr);
+
+        juce::ValueTree t ("tempo");
+        t.setProperty ("hasEstimate", tempo.hasEstimate, nullptr);
+        t.setProperty ("bpm", tempo.bpm, nullptr);
+        t.setProperty ("userEdited", tempo.userEdited, nullptr);
+        t.setProperty ("detectedBpm", tempo.detected.bpm, nullptr);
+        t.setProperty ("firstBeat", tempo.detected.firstBeat, nullptr);
+        t.setProperty ("beatsPerBar", tempo.detected.beatsPerBar, nullptr);
+        t.setProperty ("downbeat", tempo.detected.downbeat, nullptr);
+        t.setProperty ("confidence", (double) tempo.detected.confidence, nullptr);
+        state.appendChild (t, nullptr);
+    }
+
+    juce::ValueTree c ("cleanup");
+    c.setProperty ("quantize", cleanup.quantize, nullptr);
+    c.setProperty ("grid", (int) cleanup.grid, nullptr);
+    state.appendChild (c, nullptr);
+
+    juce::ValueTree p ("preview");
+    p.setProperty ("mix", (double) preview.getMix(), nullptr);
+    std::vector<int> muted, soloed;
+    for (int layer = 0; layer < atm::Preview::kLayerSlots; ++layer)
+    {
+        if (preview.isMuted (layer))  muted.push_back (layer);
+        if (preview.isSoloed (layer)) soloed.push_back (layer);
+    }
+    p.setProperty ("muted", joinInts (muted), nullptr);
+    p.setProperty ("soloed", joinInts (soloed), nullptr);
+    state.appendChild (p, nullptr);
+
+    juce::MemoryOutputStream out (destData, false);
+    state.writeToStream (out);
 }
 
 void AudioToMidiProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    auto state = juce::ValueTree::readFromData (data, (size_t) sizeInBytes);
+
+    // Version 1 was XML.
+    if (! state.isValid())
+        if (auto xml = getXmlFromBinary (data, sizeInBytes))
+            state = juce::ValueTree::fromXml (*xml);
+
+    if (! state.hasType ("AudioToMidiState"))
+        return;
+
+    lastEditorWidth  = state.getProperty ("editorWidth",  0);
+    lastEditorHeight = state.getProperty ("editorHeight", 0);
+
+    if (const auto c = state.getChildWithName ("cleanup"); c.isValid())
     {
-        const auto state = juce::ValueTree::fromXml (*xml);
-        if (state.hasType ("AudioToMidiState"))
-        {
-            lastEditorWidth  = state.getProperty ("editorWidth",  0);
-            lastEditorHeight = state.getProperty ("editorHeight", 0);
-        }
+        cleanup.quantize = c.getProperty ("quantize", 0.0);
+        const int grid = c.getProperty ("grid", (int) atm::Grid::sixteenth);
+        cleanup.grid = grid == 1 ? atm::Grid::quarter : grid == 2 ? atm::Grid::eighth : atm::Grid::sixteenth;
     }
+
+    const auto audio = state.getChildWithName ("audio");
+    if (! audio.isValid())
+    {
+        sendChangeMessage();
+        return;
+    }
+
+    // The audio decodes in the background; everything else is applied once
+    // it lands (see finishLoad), so the notes never show without their audio.
+    PendingRestore restore;
+    restore.generation = ++loadGeneration;
+
+    if (const auto n = state.getChildWithName ("notes"); n.isValid())
+    {
+        if (auto* block = n.getProperty ("packed").getBinaryData())
+            restore.notes = unpackNotes (*block);
+        restore.complete = n.getProperty ("complete", true);
+    }
+
+    if (const auto t = state.getChildWithName ("tempo"); t.isValid())
+    {
+        restore.tempo.hasEstimate = t.getProperty ("hasEstimate", false);
+        restore.tempo.bpm = t.getProperty ("bpm", 120.0);
+        restore.tempo.userEdited = t.getProperty ("userEdited", false);
+        restore.tempo.detected.bpm = t.getProperty ("detectedBpm", 120.0);
+        restore.tempo.detected.firstBeat = t.getProperty ("firstBeat", 0.0);
+        restore.tempo.detected.beatsPerBar = juce::jmax (1, (int) t.getProperty ("beatsPerBar", 4));
+        restore.tempo.detected.downbeat = t.getProperty ("downbeat", 0);
+        restore.tempo.detected.confidence = (float) (double) t.getProperty ("confidence", 0.0);
+    }
+
+    if (const auto p = state.getChildWithName ("preview"); p.isValid())
+    {
+        restore.mix = (float) (double) p.getProperty ("mix", 0.5);
+        restore.muted = splitInts (p.getProperty ("muted", ""));
+        restore.soloed = splitInts (p.getProperty ("soloed", ""));
+    }
+
+    restore.cleanup = cleanup;
+    pendingRestore = std::move (restore);
+
+    if (job != nullptr)
+        job->cancel();
+    job.reset();
+
+    const juce::String name = audio.getProperty ("name", "audio");
+    const juce::String extension = audio.getProperty ("extension", "flac");
+    std::shared_ptr<const juce::MemoryBlock> bytes;
+    if (auto* block = audio.getProperty ("bytes").getBinaryData())
+        bytes = std::make_shared<const juce::MemoryBlock> (*block);
+
+    loadingFileName = name;
+    loadError.clear();
+    sendChangeMessage();
+
+    const int generation = pendingRestore->generation;
+    juce::WeakReference<AudioToMidiProcessor> weakThis (this);
+
+    loaderPool.addJob ([this, weakThis, bytes, extension, name, generation]
+    {
+        auto decoded = decodeAudioData (bytes, extension, name, [this, generation]
+        {
+            return loadGeneration.load() != generation;
+        });
+
+        juce::MessageManager::callAsync ([weakThis, generation, result = std::move (decoded)]
+        {
+            if (auto* self = weakThis.get())
+                self->finishLoad (generation, result);
+        });
+    });
 }
 
 //==============================================================================
@@ -83,6 +257,7 @@ void AudioToMidiProcessor::loadFile (const juce::File& file)
     JUCE_ASSERT_MESSAGE_THREAD
 
     const int generation = ++loadGeneration;
+    pendingRestore.reset();
 
     loadingFileName = file.getFileName();
     loadError.clear();
@@ -119,15 +294,54 @@ void AudioToMidiProcessor::finishLoad (int generation, DecodeResult result)
     if (result.audio != nullptr)
     {
         source = std::move (result.audio);
+        stateAudio = std::move (result.stateBytes);
+        stateAudioExtension = result.stateExtension;
         preview.setSource (source);
-        startTranscription();
+
+        if (pendingRestore.has_value() && pendingRestore->generation == generation)
+            applyRestore (std::move (*pendingRestore));
+        else
+            startTranscription();
     }
     else
     {
         loadError = result.error;
     }
 
+    pendingRestore.reset();
     sendChangeMessage();
+}
+
+void AudioToMidiProcessor::applyRestore (PendingRestore&& restore)
+{
+    // A session saved mid-transcription is simply run again.
+    if (! restore.complete)
+    {
+        startTranscription();
+        return;
+    }
+
+    ++jobGeneration;
+    transcription = {};
+    transcription.model = atm::preferredModel();
+    transcription.phase = TranscriptionPhase::done;
+    transcription.progress = 1.0f;
+    transcription.finalizedThrough = source != nullptr ? source->getLengthSeconds() : 0.0;
+    transcription.notes = std::move (restore.notes);
+
+    tempo = restore.tempo;
+    cleanup = restore.cleanup;
+
+    preview.setMix (restore.mix);
+    for (int layer = 0; layer < atm::Preview::kLayerSlots; ++layer)
+    {
+        preview.setMuted (layer, false);
+        preview.setSoloed (layer, false);
+    }
+    for (const int layer : restore.muted)  preview.setMuted (layer, true);
+    for (const int layer : restore.soloed) preview.setSoloed (layer, true);
+
+    notesChanged();
 }
 
 //==============================================================================

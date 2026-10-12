@@ -41,6 +41,7 @@ namespace
         print ("       atm-cli --resample-check     (alignment test, no model needed)");
         print ("       atm-cli --tempo-check        (synthetic click tracks, no model needed)");
         print ("       atm-cli --velocity-check     (synthetic tones at known levels, no model needed)");
+        print ("       atm-cli --state-check FILE   (what the project would store for FILE, and a round trip)");
         return 2;
     }
 
@@ -201,6 +202,67 @@ namespace
     }
 }
 
+namespace
+{
+    /** Decodes FILE as the plugin does, reports what its saved state would
+        hold (and how long encoding took), then decodes those bytes back and
+        compares: a compressed container must round-trip sample-exactly, a
+        FLAC of a wav must match to 16-bit precision. */
+    int stateCheck (const juce::File& file)
+    {
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        const auto decoded = decodeAudioFile (file, [] { return false; });
+        const auto t1 = juce::Time::getMillisecondCounterHiRes();
+        if (decoded.audio == nullptr)
+        {
+            print ("decode failed: " + decoded.error);
+            return 1;
+        }
+
+        const auto& a = *decoded.audio;
+        const double rawBytes = (double) a.samples.getNumSamples() * a.samples.getNumChannels() * 2;   // as 16-bit PCM
+        print (juce::String::formatted ("file:     %s, %.1f s, %d ch, %.0f Hz, %.1f MB as 16-bit pcm",
+                                        a.fileName.toRawUTF8(), a.getLengthSeconds(), a.samples.getNumChannels(), a.sampleRate, rawBytes / 1.0e6));
+
+        if (decoded.stateBytes == nullptr)
+        {
+            print ("state:    no audio bytes (encoding failed)");
+            return 1;
+        }
+
+        const double stateBytes = (double) decoded.stateBytes->getSize();
+        print (juce::String::formatted ("state:    %.1f MB as .%s (%.0f%% of pcm), decode+encode %.0f ms",
+                                        stateBytes / 1.0e6, decoded.stateExtension.toRawUTF8(),
+                                        100.0 * stateBytes / rawBytes, t1 - t0));
+
+        const auto t2 = juce::Time::getMillisecondCounterHiRes();
+        const auto back = decodeAudioData (decoded.stateBytes, decoded.stateExtension, a.fileName, [] { return false; });
+        const auto t3 = juce::Time::getMillisecondCounterHiRes();
+        if (back.audio == nullptr)
+        {
+            print ("restore failed: " + back.error);
+            return 1;
+        }
+
+        const auto& b = *back.audio;
+        float worst = 0.0f;
+        const int n = juce::jmin (a.samples.getNumSamples(), b.samples.getNumSamples());
+        for (int ch = 0; ch < juce::jmin (a.samples.getNumChannels(), b.samples.getNumChannels()); ++ch)
+            for (int i = 0; i < n; ++i)
+                worst = juce::jmax (worst, std::abs (a.samples.getSample (ch, i) - b.samples.getSample (ch, i)));
+
+        const bool sameShape = a.samples.getNumSamples() == b.samples.getNumSamples()
+                            && a.samples.getNumChannels() == b.samples.getNumChannels()
+                            && juce::exactlyEqual (a.sampleRate, b.sampleRate);
+        const float tolerance = decoded.stateExtension == "flac" ? 1.0f / 32768.0f + 1.0e-6f : 1.0e-6f;
+        const bool ok = sameShape && worst <= tolerance;
+
+        print (juce::String::formatted ("restore:  %.0f ms, %s, worst sample difference %.2e (allowed %.2e): %s",
+                                        t3 - t2, sameShape ? "same length/channels/rate" : "SHAPE DIFFERS", worst, tolerance, ok ? "ok" : "WRONG"));
+        return ok ? 0 : 1;
+    }
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // message manager, for the service's WeakReferences
@@ -211,6 +273,8 @@ int main (int argc, char* argv[])
         return tempoCheck();
     if (argc == 2 && juce::String (argv[1]) == "--velocity-check")
         return velocityCheck();
+    if (argc == 3 && juce::String (argv[1]) == "--state-check")
+        return stateCheck (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
 
     juce::File file;
     auto model = atm::kDefaultModelSize;
