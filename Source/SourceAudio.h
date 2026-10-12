@@ -1,6 +1,8 @@
 #pragma once
 
-#include <JuceHeader.h>
+// Module headers rather than JuceHeader.h: this file is shared with atm-cli.
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 
 //==============================================================================
 /**

@@ -8,7 +8,7 @@ namespace
     // Alphas from the brand alpha hierarchy (ReferenceSheet section 06).
     constexpr float kAlphaHot       = 1.00f;   // directly engaged
     constexpr float kAlphaResting   = 0.75f;   // resting interactive / primary message
-    constexpr float kAlphaSecondary = 0.45f;   // secondary text
+    constexpr float kAlphaSecondary = 0.45f;   // secondary text, the progress line
     constexpr float kAlphaHairline  = 0.40f;   // every floating surface's border
     constexpr float kAlphaGhost     = 0.16f;   // the waveform: present, never competing with notes
     constexpr float kAlphaWatermark = 0.10f;
@@ -16,13 +16,17 @@ namespace
     // The waveform keeps clear of the canvas edges so the first and last
     // notes never sit on the border.
     constexpr float kWaveformInsetX = 16.0f, kWaveformInsetY = 24.0f;
+
+    constexpr int kPrimaryH = 20, kSecondaryH = 18, kLineGap = 4, kChipGap = 10;
 }
 
 Canvas::Canvas()
 {
-    // Clicks fall through to the editor for now; nothing on the canvas is
-    // interactive until notes and layers arrive.
-    setInterceptsMouseClicks (false, false);
+    // Clicks fall through to the editor, except on the chip.
+    setInterceptsMouseClicks (false, true);
+
+    actionChip.onClick = [this] { if (onAction) onAction(); };
+    addChildComponent (actionChip);
 }
 
 void Canvas::setSource (std::shared_ptr<const SourceAudio> newSource)
@@ -41,6 +45,7 @@ void Canvas::setLoadStatus (const juce::String& loading, const juce::String& err
 
     loadingFileName = loading;
     loadError = error;
+    updateChip();
     repaint();
 }
 
@@ -50,6 +55,7 @@ void Canvas::setDragHover (bool isHovering)
         return;
 
     dragHover = isHovering;
+    updateChip();
     repaint();
 }
 
@@ -59,7 +65,55 @@ void Canvas::setWordmarkTypeface (juce::Typeface::Ptr face)
     repaint();
 }
 
+void Canvas::setStatus (const Status& newStatus)
+{
+    if (newStatus.primary == status.primary && newStatus.secondary == status.secondary
+        && newStatus.action == status.action && juce::exactlyEqual (newStatus.primaryAlpha, status.primaryAlpha))
+        return;
+
+    status = newStatus;
+    updateChip();
+    repaint();
+}
+
+void Canvas::setProgressTime (double seconds)
+{
+    if (juce::exactlyEqual (seconds, progressTime))
+        return;
+
+    progressTime = seconds;
+    repaint();
+}
+
+void Canvas::resized()
+{
+    updateChip();
+}
+
+void Canvas::updateChip()
+{
+    // The chip belongs to the status message, so it goes whenever something
+    // else takes the message area over.
+    const bool show = status.action.isNotEmpty() && loadingFileName.isEmpty() && ! dragHover;
+    actionChip.setVisible (show);
+
+    if (! show)
+        return;
+
+    actionChip.setText (status.action);
+
+    const int blockH = kPrimaryH + (status.secondary.isNotEmpty() ? kLineGap + kSecondaryH : 0);
+    const int top = getHeight() / 2 + blockH / 2 + kChipGap;
+    actionChip.setBounds (juce::Rectangle<int> (actionChip.getIdealWidth(), Chip::kHeight)
+                              .withCentre ({ getWidth() / 2, top + Chip::kHeight / 2 }));
+}
+
 //==============================================================================
+juce::Rectangle<float> Canvas::waveformArea() const
+{
+    return getLocalBounds().toFloat().reduced (kWaveformInsetX, kWaveformInsetY);
+}
+
 void Canvas::paint (juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
@@ -72,7 +126,21 @@ void Canvas::paint (juce::Graphics& g)
     g.fillRect (bounds);
 
     if (source != nullptr)
-        paintWaveform (g, bounds.reduced (kWaveformInsetX, kWaveformInsetY));
+    {
+        const auto area = waveformArea();
+        paintWaveform (g, area);
+
+        // Where the transcription has got to: a hairline sweeping across the
+        // waveform. Ink, not copper -- copper is kept for the selected layer
+        // and the playhead.
+        if (progressTime >= 0.0 && source->getLengthSeconds() > 0.0)
+        {
+            const float fraction = (float) juce::jlimit (0.0, 1.0, progressTime / source->getLengthSeconds());
+            const float x = area.getX() + area.getWidth() * fraction;
+            g.setColour (LnF::ink().withAlpha (kAlphaSecondary));
+            g.drawLine (x, area.getY() - 8.0f, x, area.getBottom() + 8.0f, 1.0f);
+        }
+    }
 
     paintWordmark (g);
     paintMessage (g);
@@ -174,6 +242,12 @@ void Canvas::paintMessage (juce::Graphics& g) const
         primary = loadError;
         secondary = "try another file";
     }
+    else if (status.primary.isNotEmpty())
+    {
+        primary = status.primary;
+        secondary = status.secondary;
+        primaryAlpha = status.primaryAlpha;
+    }
     else if (source == nullptr)
     {
         primary = "drop an audio file";
@@ -183,19 +257,18 @@ void Canvas::paintMessage (juce::Graphics& g) const
     if (primary.isEmpty())
         return;
 
-    constexpr int primaryH = 20, secondaryH = 18, gap = 4;
-    const int blockH = primaryH + (secondary.isNotEmpty() ? gap + secondaryH : 0);
+    const int blockH = kPrimaryH + (secondary.isNotEmpty() ? kLineGap + kSecondaryH : 0);
     auto block = getLocalBounds().reduced (24, 0).withSizeKeepingCentre (getWidth() - 48, blockH);
 
     g.setFont (LnF::uiFont (14.0f));
     g.setColour (LnF::ink().withAlpha (primaryAlpha));
-    g.drawFittedText (primary, block.removeFromTop (primaryH), juce::Justification::centred, 1, 1.0f);
+    g.drawFittedText (primary, block.removeFromTop (kPrimaryH), juce::Justification::centred, 1, 1.0f);
 
     if (secondary.isNotEmpty())
     {
-        block.removeFromTop (gap);
+        block.removeFromTop (kLineGap);
         g.setFont (LnF::uiFont (12.0f));
         g.setColour (LnF::ink().withAlpha (kAlphaSecondary));
-        g.drawFittedText (secondary, block.removeFromTop (secondaryH), juce::Justification::centred, 1, 1.0f);
+        g.drawFittedText (secondary, block.removeFromTop (kSecondaryH), juce::Justification::centred, 1, 1.0f);
     }
 }

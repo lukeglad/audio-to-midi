@@ -17,11 +17,14 @@
     stays readable without ballooning, and a bigger window gives a genuinely
     bigger canvas rather than bigger chrome.
 
-    Accepts a file drop anywhere in the window.
+    Accepts a file drop anywhere in the window. Composes the status text from
+    the processor's transcription state and the shared downloader, refreshed
+    on change messages and polled for progress.
 */
 class AudioToMidiEditor : public juce::AudioProcessorEditor,
                           public juce::FileDragAndDropTarget,
-                          private juce::ChangeListener
+                          private juce::ChangeListener,
+                          private juce::Timer
 {
 public:
     explicit AudioToMidiEditor (AudioToMidiProcessor&);
@@ -37,7 +40,9 @@ public:
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void timerCallback() override;
     void refreshFromProcessor();
+    void showModelMenu();
 
     static constexpr float kUiScale = 1.3f;
     static constexpr int   kMinWidth = 540, kMinHeight = 404;
