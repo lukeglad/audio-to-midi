@@ -1,0 +1,21 @@
+# CMake build trees (build.sh writes build/ and build-xcode/).
+build/
+build-*/
+
+# Project-local CMake + Ninja, pip-installed by build.sh's setup step.
+# Recreated on demand; nothing in it is project source.
+.tools/
+
+# Xcode per-user state.
+**/xcuserdata/
+**/*.xcuserstate
+
+# Working notes for AI-assisted sessions -- not documentation for humans,
+# and it goes stale fast (same convention as EQ).
+CLAUDE.md
+
+# macOS
+.DS_Store
+
+# Local test files (generated / third-party excerpts), not shipped.
+test-audio/
