@@ -189,9 +189,10 @@ void AudioToMidiEditor::timerCallback()
     // Download and transcription progress are polled, as is the playhead;
     // everything else arrives as a change message. The playhead wants a
     // smoother rate than the rest.
-    const bool playing = processorRef.getPreview().isPlaying();
-    if (getTimerInterval() != (playing ? 33 : 66))
-        startTimer (playing ? 33 : 66);
+    const bool animating = processorRef.getPreview().isPlaying()
+                        || processorRef.getTranscription().phase == TranscriptionPhase::transcribing;
+    if (getTimerInterval() != (animating ? 33 : 66))
+        startTimer (animating ? 33 : 66);
 
     refreshFromProcessor();
 }
@@ -279,10 +280,21 @@ void AudioToMidiEditor::refreshFromProcessor()
                 break;
 
             case TranscriptionPhase::transcribing:
-                status.primary = "transcribing" + kDot + percent (t.progress);
+            {
+                if (progressSmoother.run != processorRef.getTranscriptionRun())
+                {
+                    progressSmoother = {};
+                    progressSmoother.run = processorRef.getTranscriptionRun();
+                }
+
+                const double length = source != nullptr ? source->getLengthSeconds() : 0.0;
+                const float shown = progressSmoother.update (juce::Time::getMillisecondCounterHiRes(),
+                                                             t.progress, length, t.model);
+                status.primary = "transcribing" + kDot + percent (shown);
                 status.action = "cancel";
-                progressTime = t.finalizedThrough;
+                progressTime = shown * length;
                 break;
+            }
 
             case TranscriptionPhase::done:
                 // The layer chips say what was found. Only the cases that
@@ -404,4 +416,41 @@ void AudioToMidiEditor::saveLayerAs (int layerKey)
 
         safeThis->writeLayerMidi (layerKey, file);
     });
+}
+
+//==============================================================================
+float AudioToMidiEditor::ProgressSmoother::update (double nowMs, float reported, double lengthSeconds, atm::ModelSize model)
+{
+    reported = juce::jlimit (0.0f, 1.0f, reported);
+    if (reported >= 1.0f)
+        return shown = 1.0f;
+
+    const int chunks = juce::jmax (1, (int) std::ceil (lengthSeconds / 5.0));
+    const float step = 1.0f / (float) chunks;
+
+    // The first call of a run: start the clock, with a typical pace for the
+    // model until a real chunk has been timed (medium is ~1.8 s per chunk on
+    // an M5 Pro's GPU; slower machines correct this after one chunk).
+    if (lastReportMs < 0.0)
+    {
+        lastReportMs = nowMs;
+        msPerChunk = model == atm::ModelSize::small ? 1200.0 : model == atm::ModelSize::large ? 8000.0 : 2500.0;
+        base = reported;
+    }
+
+    // A new report: measure how long the chunk(s) since the last one took.
+    if (reported > base + 1.0e-4f)
+    {
+        const int advanced = juce::jmax (1, juce::roundToInt ((reported - base) / step));
+        const double perChunk = juce::jmax (100.0, (nowMs - lastReportMs) / advanced);
+        msPerChunk = measured ? 0.5 * msPerChunk + 0.5 * perChunk : perChunk;
+        measured = true;
+        base = reported;
+        lastReportMs = nowMs;
+    }
+
+    const float ahead = (float) ((nowMs - lastReportMs) / msPerChunk) * step;
+    const float target = juce::jmin (base + juce::jmin (ahead, step * 0.95f), 0.99f);
+    shown = juce::jmax (shown, target);
+    return shown;
 }

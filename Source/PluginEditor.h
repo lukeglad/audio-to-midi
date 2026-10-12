@@ -93,6 +93,25 @@ private:
     Canvas canvas;
 
     SizeMemoryConstrainer sizeConstrainer;
+
+    /**
+        Turns the engine's progress, which only moves once per 5 s chunk,
+        into a steady climb. Between reports it advances at the measured pace
+        of a chunk, but never past 95% of the way to the next chunk boundary:
+        it holds there until the engine confirms, so it can pause but never
+        overshoot and jump back. The first chunk uses a typical pace for the
+        model size until a real one is measured.
+    */
+    struct ProgressSmoother
+    {
+        float update (double nowMs, float reported, double lengthSeconds, atm::ModelSize);
+
+        int run = -1;
+        double lastReportMs = -1.0, msPerChunk = 0.0;
+        bool measured = false;
+        float base = 0.0f, shown = 0.0f;
+    };
+    ProgressSmoother progressSmoother;
     std::unique_ptr<juce::FileChooser> saveChooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioToMidiEditor)
