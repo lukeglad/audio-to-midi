@@ -20,6 +20,25 @@ if [ ! -x .tools/bin/cmake ] || [ ! -x .tools/bin/ninja ]; then
 fi
 export PATH="$PWD/.tools/bin:$PATH"
 
+# The preview's soundfont (external/GeneralUser-GS/README.md): fetched once
+# into the shared AudioFlower folder when missing, pinned to a commit and
+# checked against its digest. The installer puts it there for users.
+SF_DIR="$HOME/Library/Application Support/AudioFlower/soundfonts"
+SF_FILE="$SF_DIR/GeneralUser-GS.sf2"
+SF_URL="https://github.com/mrbumpy409/GeneralUser-GS/raw/97049183643d5fc5a9322a69c5b09efb667c6c3a/GeneralUser-GS.sf2"
+SF_SHA256="9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe"
+if [ ! -f "$SF_FILE" ]; then
+  echo "fetching GeneralUser GS (32 MB) into $SF_DIR..."
+  mkdir -p "$SF_DIR"
+  curl -fsSL -o "$SF_FILE.part" "$SF_URL"
+  if [ "$(shasum -a 256 "$SF_FILE.part" | cut -d' ' -f1)" != "$SF_SHA256" ]; then
+    echo "GeneralUser GS: digest mismatch, not installed" >&2
+    rm -f "$SF_FILE.part"
+    exit 1
+  fi
+  mv "$SF_FILE.part" "$SF_FILE"
+fi
+
 MODE="${1:-Release}"
 
 if [ "$MODE" = "xcode" ]; then

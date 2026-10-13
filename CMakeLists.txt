@@ -48,6 +48,8 @@ set (ENGINE_SOURCES
     Source/Engine/ModelFiles.cpp
     Source/Engine/Preview.cpp
     Source/Engine/Resampler.cpp
+    Source/Engine/SimpleSynth.cpp
+    Source/Engine/SoundFont.cpp
     Source/Engine/Tempo.cpp
     Source/Engine/TranscriptionService.cpp
     Source/SourceAudio.cpp)
@@ -82,6 +84,9 @@ juce_add_plugin (AudioToMidi
     COPY_PLUGIN_AFTER_BUILD     TRUE)
 
 juce_generate_juce_header (AudioToMidi)
+
+# TinySoundFont (external/TinySoundFont, MIT): the preview's soundfont player.
+target_include_directories (AudioToMidi PRIVATE external/TinySoundFont)
 
 target_sources (AudioToMidi PRIVATE
     ${ENGINE_SOURCES}
@@ -139,7 +144,7 @@ target_sources (atm-cli PRIVATE
     Source/Engine/Velocity.cpp   # research only: not part of the plugin
     Source/Cli/atm-cli.cpp)
 
-target_include_directories (atm-cli PRIVATE Source)
+target_include_directories (atm-cli PRIVATE Source external/TinySoundFont)
 
 target_compile_definitions (atm-cli PRIVATE
     JUCE_WEB_BROWSER=0

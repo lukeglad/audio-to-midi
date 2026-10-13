@@ -6,11 +6,19 @@ AudioToMidiProcessor::AudioToMidiProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
     downloader->addChangeListener (this);
+
+    // The preview plays through the soundfont once it has loaded (the first
+    // instance in the process starts the load). Listen first, then look: a
+    // load finishing in between is caught either way.
+    soundFonts->addChangeListener (this);
+    if (auto font = soundFonts->get())
+        preview.setSoundFont (font);
 }
 
 AudioToMidiProcessor::~AudioToMidiProcessor()
 {
     downloader->removeChangeListener (this);
+    soundFonts->removeChangeListener (this);
 
     if (job != nullptr)
         job->cancel();
@@ -519,8 +527,15 @@ std::optional<atm::ModelSize> AudioToMidiProcessor::smallerModel (atm::ModelSize
     return (atm::ModelSize) ((int) size - 1);
 }
 
-void AudioToMidiProcessor::changeListenerCallback (juce::ChangeBroadcaster*)
+void AudioToMidiProcessor::changeListenerCallback (juce::ChangeBroadcaster* broadcaster)
 {
+    if (broadcaster == &soundFonts.get())
+    {
+        if (auto font = soundFonts->get())
+            preview.setSoundFont (font);
+        return;
+    }
+
     // A download started, finished or failed. The one we were waiting for
     // landing is the cue to transcribe.
     if (transcription.phase == TranscriptionPhase::waitingForModel && atm::isModelInstalled (transcription.model))

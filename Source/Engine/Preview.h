@@ -4,6 +4,8 @@
 
 #include "../SourceAudio.h"
 #include "Cleanup.h"
+#include "SimpleSynth.h"
+#include "SoundFont.h"
 
 #include <array>
 #include <atomic>
@@ -14,9 +16,14 @@
 namespace atm
 {
     /**
-        The preview: plays the original audio and a simple synth rendering of
-        the notes together, with a crossfade between them and per-layer mute
-        and solo. Its own transport, independent of the host's.
+        The preview: plays the original audio and the notes together, with a
+        crossfade between them and per-layer mute and solo. Its own
+        transport, independent of the host's.
+
+        The notes play through a General MIDI soundfont (each layer on its
+        instrument, drums on a kit) once one has been handed over, and
+        through a simple synth until then or without one. The preview
+        schedules; the synths only sound (see NoteSynth).
 
         Message-thread calls publish state; render() runs on the audio thread
         and never allocates, locks for long, or frees. New sources and notes
@@ -35,6 +42,11 @@ namespace atm
         void setSource (std::shared_ptr<const SourceAudio>);
         void setNotes (const std::vector<MidiNote>&);
 
+        /** The soundfont to play the notes through, from the next block on.
+            Taken once: later calls are ignored. */
+        void setSoundFont (std::shared_ptr<const SoundFont>);
+        bool hasSoundFont() const noexcept { return fontSynthReady.load(); }
+
         void play();
         void stop();
         void togglePlay()                 { isPlaying() ? stop() : play(); }
@@ -44,7 +56,7 @@ namespace atm
         double getPosition() const noexcept;   // seconds
         double getLength() const noexcept { return length.load(); }
 
-        /** 0 = original audio only, 1 = synth only. Equal-power crossfade. */
+        /** 0 = original audio only, 1 = notes only. Equal-power crossfade. */
         void setMix (float);
         float getMix() const noexcept     { return mix.load(); }
 
@@ -69,32 +81,42 @@ namespace atm
             double lengthSeconds = 0.0;
         };
 
-        struct Voice
+        // A note that has started and not yet ended: the scheduler's
+        // bookkeeping, not a synth voice.
+        struct Held
         {
             bool active = false;
             int layer = 0, pitch = 60;
             bool drum = false;
-            int drumKind = 0;
-            double startSample = 0.0, releaseSample = 0.0;
-            double phase = 0.0, freq = 440.0;
-            double env = 0.0;
-            bool released = false;
-            juce::uint32 noise = 1;
-
-            // Set by a jump (seek, stop): the voice fades out over the
-            // declick time instead of being cut, wherever the timeline went.
-            bool fading = false;
-            float fadeGain = 1.0f;
+            double releaseSample = 0.0;   // absolute, on the timeline
+            juce::uint32 order = 0;
         };
 
-        void publish (Snapshot);
-        void trigger (const MidiNote&, double atSample);
-        float renderVoice (Voice&, double sampleRate);
-        void killAllVoices();
-        void beginDeclick (double fromSeconds);
+        // A note starting or ending at a sample of the current block.
+        struct Event
+        {
+            int offset = 0;
+            juce::uint32 sequence = 0;
+            bool on = false;
+            int layer = 0, pitch = 60;
+            bool drum = false;
+        };
 
-        // Declick: a jump in the timeline (seek, scrub, stop) crossfades over
-        // a few ms instead of stepping, and starting playback fades in.
+        static constexpr int kMaxHeld = 96;
+        static constexpr int kMaxEvents = 1024;
+
+        void publish (Snapshot);
+        void beginDeclick (double fromSeconds);
+        NoteSynth& activeSynth() noexcept;
+        void clearHeld();
+        void startNote (const MidiNote&, int offset);
+        void endHeld (Held&, int offset);
+        void emit (const Event&);
+
+        // Declick: a jump in the timeline (seek, scrub, stop) crossfades the
+        // audio over a few ms instead of stepping, and starting playback
+        // fades it in. The notes side needs none of this: a synth lets its
+        // voices ring out through their release instead.
         bool wasPlaying = false;
         double lastEndSeconds = 0.0;      // where the last rendered block ended
         double fadeOutFromSeconds = 0.0;  // the old position, still playing out
@@ -123,9 +145,20 @@ namespace atm
         std::array<std::atomic<bool>, kLayerSlots> muted {}, soloed {};
         std::atomic<int> soloCount { 0 };
 
-        double sampleRate = 44100.0;
+        std::atomic<double> sampleRate { 44100.0 };
         size_t nextNote = 0;
-        std::array<Voice, 48> voices;
-        std::vector<float> synthBuffer;
+        std::array<Held, kMaxHeld> held;
+        juce::uint32 holdCounter = 0;
+        std::array<Event, kMaxEvents> events;
+        int numEvents = 0;
+        std::vector<float> synthLeft, synthRight;
+
+        // The synths. The soundfont one is built on the message thread and
+        // handed over through the flag; it then stays for good, so the audio
+        // thread can keep a reference without a lock.
+        SimpleSynth simpleSynth;
+        std::unique_ptr<SoundFontSynth> fontSynth;
+        std::atomic<bool> fontSynthReady { false };
+        NoteSynth* lastSynth = nullptr;   // audio thread: what the previous block played through
     };
 }

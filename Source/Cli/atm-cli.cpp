@@ -22,6 +22,7 @@
 #include "Engine/ModelFiles.h"
 #include "Engine/Preview.h"
 #include "Engine/Resampler.h"
+#include "Engine/SoundFont.h"
 #include "Engine/Tempo.h"
 #include "Engine/Velocity.h"   // research only; not in the plugin
 #include "Engine/TranscriptionService.h"
@@ -38,12 +39,13 @@ namespace
     int usage()
     {
         print ("usage: atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]");
-        print ("               [--quantize PCT] [--grid 4|8|16] [--preview-render OUT.wav]");
+        print ("               [--quantize PCT] [--grid 4|8|16] [--preview-render OUT.wav [--no-soundfont]]");
         print ("       atm-cli --resample-check     (alignment test, no model needed)");
         print ("       atm-cli --tempo-check        (synthetic click tracks, no model needed)");
         print ("       atm-cli --velocity-check     (synthetic tones at known levels, no model needed)");
         print ("       atm-cli --state-check FILE   (what the project would store for FILE, and a round trip)");
         print ("       atm-cli --scrub-check FILE   (seek every 50 ms while playing: no clicks at the jumps)");
+        print ("       (the preview checks use the soundfont at " + atm::soundFontFile().getFullPathName() + " when it's there)");
         print ("       atm-cli --download-check     (downloads the small model twice into a scratch folder)");
         return 2;
     }
@@ -332,14 +334,20 @@ namespace
         print (juce::String::formatted ("scrub:    largest step in normal playback %.4f, at a jump %.4f (ratio %.2f, allowed 1.50): %s",
                                         normalStep, jumpStep, jumpStep / juce::jmax (1.0e-6f, normalStep), smooth ? "ok" : "WRONG"));
 
-        // The synth must come back after a drag (a seek every block, as a
+        // The notes must come back after a drag (a seek every block, as a
         // real scrub does): a fade-out flag left on a reused voice once
-        // silenced every note after the first scrub.
-        float synthBefore = 0.0f, synthAfter = 0.0f;
+        // silenced every note after the first scrub. Through each synth.
+        const auto font = atm::SoundFont::load (atm::soundFontFile());
+        bool recovers = true;
+
+        for (int pass = 0; pass < (font != nullptr ? 2 : 1); ++pass)
         {
+            float synthBefore = 0.0f, synthAfter = 0.0f;
             atm::Preview preview;
             preview.prepare (rate, block);
             preview.setSource (decoded.audio);
+            if (pass == 1)
+                preview.setSoundFont (font);
             std::vector<atm::MidiNote> notes;
             for (int i = 0; i < 60; ++i)
                 notes.push_back ({ i * 0.25, i * 0.25 + 0.2, 60 + i % 12, 0, false, 100 });
@@ -366,11 +374,14 @@ namespace
             synthBefore = rms (1.0, false);
             rms (0.5, true);
             synthAfter = rms (1.0, false);
+
+            const bool passOk = synthAfter >= synthBefore * 0.5f;
+            recovers = recovers && passOk;
+            print (juce::String::formatted ("scrub:    %s level before a drag %.4f, after %.4f: %s",
+                                            pass == 1 ? font->getName().toRawUTF8() : "simple synth",
+                                            synthBefore, synthAfter, passOk ? "ok" : "WRONG (the notes went silent)"));
         }
 
-        const bool recovers = synthAfter >= synthBefore * 0.5f;
-        print (juce::String::formatted ("scrub:    synth level before a drag %.4f, after %.4f: %s",
-                                        synthBefore, synthAfter, recovers ? "ok" : "WRONG (the synth went silent)"));
         return smooth && recovers ? 0 : 1;
     }
 }
@@ -529,6 +540,7 @@ int main (int argc, char* argv[])
     double bpm = 120.0;
     atm::CleanupSettings cleanup;
     juce::File previewOut;
+    bool useSoundFont = true;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -544,6 +556,8 @@ int main (int argc, char* argv[])
             bpm = juce::String (argv[++i]).getDoubleValue();
         else if (arg == "--preview-render" && i + 1 < argc)
             previewOut = juce::File::getCurrentWorkingDirectory().getChildFile (argv[++i]);
+        else if (arg == "--no-soundfont")
+            useSoundFont = false;
         else if (arg == "--quantize" && i + 1 < argc)
             cleanup.quantize = juce::String (argv[++i]).getDoubleValue() / 100.0;
         else if (arg == "--grid" && i + 1 < argc)
@@ -668,16 +682,18 @@ int main (int argc, char* argv[])
     timing.tempo = est;
     timing.earliestOnset = atm::earliestOnsetOf (cleaned);
 
-    // 6. Preview: render the synth (mix 100%) offline through the same
+    // 6. Preview: render the notes (mix 100%) offline through the same
     //    class the plugin plays with, and check it made sound where the notes
-    //    are and nothing else.
+    //    are and nothing else. Through the soundfont when it's installed.
     if (previewOut != juce::File())
     {
         constexpr double rate = 48000.0;
         constexpr int block = 512;
+        const auto font = useSoundFont ? atm::SoundFont::load (atm::soundFontFile()) : nullptr;
         atm::Preview preview;
         preview.prepare (rate, block);
         preview.setSource (decoded.audio);
+        preview.setSoundFont (font);
         preview.setNotes (cleaned);
         preview.setMix (1.0f);
         preview.play();
@@ -699,14 +715,28 @@ int main (int argc, char* argv[])
         int firstLoud = -1;
         bool finite = true;
         float peak = 0.0f;
+        double sumSquares = 0.0;
         for (int i = 0; i < written; ++i)
         {
             const float v = rendered.getSample (0, i);
             finite = finite && std::isfinite (v);
             peak = juce::jmax (peak, std::abs (v));
+            sumSquares += (double) v * v;
             if (firstLoud < 0 && std::abs (v) > 0.01f)
                 firstLoud = i;
         }
+
+        // For the gain calibration: the original, normalised as the preview
+        // plays it, against the rendering.
+        double audioSquares = 0.0;
+        {
+            const float gain = audio.waveform.peak > 1.0e-4f ? 0.9f / audio.waveform.peak : 1.0f;
+            const float* in = audio.samples.getReadPointer (0);
+            for (int i = 0; i < audio.samples.getNumSamples(); ++i)
+                audioSquares += (double) (gain * in[i]) * (gain * in[i]);
+        }
+        const double renderDb = 10.0 * std::log10 (sumSquares / juce::jmax (1, written) + 1.0e-12);
+        const double audioDb = 10.0 * std::log10 (audioSquares / juce::jmax (1, audio.samples.getNumSamples()) + 1.0e-12);
 
         const double firstOnset = atm::earliestOnsetOf (cleaned);
         const double firstSound = firstLoud >= 0 ? firstLoud / rate : -1.0;
@@ -722,8 +752,10 @@ int main (int argc, char* argv[])
                 writer->writeFromAudioSampleBuffer (rendered, 0, written);
         }
 
-        print (juce::String::formatted ("preview:  %.1f s rendered, peak %.2f (must be 0.05-1.0), first sound at %.3f s (first note %.3f s)%s: %s",
+        print (juce::String::formatted ("preview:  %s, %.1f s rendered, peak %.2f (must be 0.05-1.0), first sound at %.3f s (first note %.3f s)%s: %s",
+                                        font != nullptr ? font->getName().toRawUTF8() : "simple synth",
                                         written / rate, peak, firstSound, firstOnset, finite ? "" : ", NOT FINITE", ok ? "ok" : "WRONG"));
+        print (juce::String::formatted ("          loudness %.1f dBFS rms (the original as the preview plays it: %.1f)", renderDb, audioDb));
         if (! ok)
             return 1;
     }
@@ -810,8 +842,9 @@ int main (int argc, char* argv[])
     for (int i = 0; i < juce::jmin (notesToPrint, (int) notes.size()); ++i)
     {
         const auto& n = notes[(size_t) i];
-        print (juce::String::formatted ("  %7.3f - %7.3f  pitch %3d  %s", n.onset, n.offset, n.pitch,
-                                        atm::instrumentDisplayName (n.program).toRawUTF8()));
+        print (juce::String::formatted ("  %7.3f - %7.3f  pitch %3d  program %3d%s  %s", n.onset, n.offset, n.pitch,
+                                        n.program, n.is_drum ? " drum" : "",
+                                        n.is_drum ? "drums" : atm::instrumentDisplayName (n.program).toRawUTF8()));
     }
 
     return 0;

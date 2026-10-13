@@ -1,5 +1,6 @@
 #include "Preview.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace atm
@@ -9,7 +10,7 @@ namespace
 {
     constexpr double kPi = juce::MathConstants<double>::pi;
     constexpr double kTailSeconds = 0.6;      // keep rolling past the end for releases
-    constexpr float  kSynthLevel = 0.11f;     // per voice, before the envelope
+    constexpr double kMinNoteSeconds = 0.01;  // a note-off never lands before its note-on
 
     // A soft knee above 0.7 so stacked chords round off instead of clipping.
     float softLimit (float x) noexcept
@@ -23,28 +24,6 @@ namespace
     constexpr juce::uint32 kRetireAfterMs = 2000;
 
     int slotFor (int layer) noexcept { return layer >= Preview::kLayerSlots ? Preview::kLayerSlots - 1 : juce::jmax (0, layer); }
-
-    // Drum kinds, from the GM percussion note.
-    enum DrumKind { kick, snare, hat, tom, cymbal, other };
-
-    DrumKind drumKindFor (int pitch) noexcept
-    {
-        switch (pitch)
-        {
-            case 35: case 36:                                   return kick;
-            case 37: case 38: case 39: case 40:                 return snare;
-            case 42: case 44: case 46:                          return hat;
-            case 41: case 43: case 45: case 47: case 48: case 50: return tom;
-            case 49: case 51: case 52: case 53: case 55: case 57: case 59: return cymbal;
-            default:                                            return other;
-        }
-    }
-
-    float nextNoise (juce::uint32& state) noexcept
-    {
-        state = state * 1664525u + 1013904223u;
-        return (float) (state >> 8) * (1.0f / 8388608.0f) - 1.0f;
-    }
 }
 
 //==============================================================================
@@ -88,6 +67,15 @@ void Preview::setNotes (const std::vector<MidiNote>& notes)
 
     publish (std::move (snapshot));
     ++seekGeneration;   // the scheduler re-finds its place in the new list
+}
+
+void Preview::setSoundFont (std::shared_ptr<const SoundFont> font)
+{
+    if (font == nullptr || fontSynthReady.load())
+        return;
+
+    fontSynth = std::make_unique<SoundFontSynth> (std::move (font));
+    fontSynthReady.store (true, std::memory_order_release);
 }
 
 void Preview::publish (Snapshot snapshot)
@@ -174,144 +162,87 @@ bool Preview::isAudible (int layer) const noexcept
 //==============================================================================
 void Preview::prepare (double newSampleRate, int maxBlockSize)
 {
-    sampleRate = newSampleRate;
-    synthBuffer.assign ((size_t) juce::jmax (1, maxBlockSize), 0.0f);
-    killAllVoices();
+    sampleRate.store (newSampleRate);
+    synthLeft.assign ((size_t) juce::jmax (1, maxBlockSize), 0.0f);
+    synthRight.assign ((size_t) juce::jmax (1, maxBlockSize), 0.0f);
+    activeSynth().cutAll();
+    simpleSynth.cutAll();
+    clearHeld();
     ++seekGeneration;
 }
 
-void Preview::killAllVoices()
+NoteSynth& Preview::activeSynth() noexcept
 {
-    for (auto& voice : voices)
+    if (fontSynthReady.load (std::memory_order_acquire))
+        return *fontSynth;
+    return simpleSynth;
+}
+
+void Preview::clearHeld()
+{
+    for (auto& h : held)
+        h.active = false;
+}
+
+void Preview::emit (const Event& event)
+{
+    if (numEvents < kMaxEvents)
     {
-        voice.active = false;
-        voice.fading = false;
-        voice.fadeGain = 1.0f;
+        events[(size_t) numEvents] = event;
+        events[(size_t) numEvents].sequence = (juce::uint32) numEvents;
+        ++numEvents;
     }
 }
 
-void Preview::trigger (const MidiNote& note, double atSample)
+void Preview::endHeld (Held& h, int offset)
 {
-    // Steal the oldest voice if none is free.
-    Voice* chosen = nullptr;
-    for (auto& voice : voices)
-        if (! voice.active) { chosen = &voice; break; }
-    if (chosen == nullptr)
-    {
-        chosen = &voices[0];
-        for (auto& voice : voices)
-            if (voice.startSample < chosen->startSample)
-                chosen = &voice;
-    }
-
-    auto& v = *chosen;
-    v.active = true;
-    v.released = false;
-    v.fading = false;      // a reused voice starts fresh, whatever it was doing
-    v.fadeGain = 1.0f;
-    v.layer = note.layer;
-    v.pitch = note.pitch;
-    v.drum = note.drum;
-    v.drumKind = drumKindFor (note.pitch);
-    v.startSample = atSample;
-    v.releaseSample = note.drum ? atSample : atSample + (note.offset - note.onset) * sampleRate;
-    v.phase = 0.0;
-    v.env = 0.0;
-    v.freq = 440.0 * std::pow (2.0, (note.pitch - 69) / 12.0);
-    v.noise = ((juce::uint32) note.pitch * 2654435761u) | 1u;
+    emit ({ offset, 0, false, h.layer, h.pitch, h.drum });
+    h.active = false;
 }
 
-float Preview::renderVoice (Voice& v, double rate)
+void Preview::startNote (const MidiNote& note, int offset)
 {
-    // Time since the hit, in seconds, for the drum shapes.
-    const double t = v.phase;   // drums use `phase` as elapsed seconds
+    // The same pitch again on the same layer ends what was sounding, the
+    // way a keyboard would; otherwise a free slot, or the oldest note's.
+    Held* slot = nullptr;
+    Held* oldest = nullptr;
 
-    if (v.drum)
+    for (auto& h : held)
     {
-        float out = 0.0f;
-        double amp = 0.0, tau = 0.1;
+        if (h.active && h.layer == note.layer && h.pitch == note.pitch)
+            endHeld (h, offset);
 
-        switch (v.drumKind)
+        if (! h.active)
         {
-            case kick:
-            {
-                const double f = 45.0 + 90.0 * std::exp (-t / 0.045);
-                v.env += 2.0 * kPi * f / rate;               // env doubles as the sine phase
-                out = (float) std::sin (v.env);
-                tau = 0.14;
-                break;
-            }
-            case snare:
-                out = 0.7f * nextNoise (v.noise) + 0.3f * (float) std::sin (2.0 * kPi * 190.0 * t);
-                tau = 0.08;
-                break;
-            case hat:
-            {
-                // Differentiated noise: bright, thin.
-                const float n = nextNoise (v.noise);
-                out = n - (float) v.env;
-                v.env = n;
-                tau = v.pitch == 46 ? 0.18 : v.pitch == 44 ? 0.05 : 0.035;
-                break;
-            }
-            case tom:
-                out = (float) std::sin (2.0 * kPi * (80.0 + 12.0 * (v.pitch - 41)) * t * (1.0 + 0.3 * std::exp (-t / 0.05)));
-                tau = 0.16;
-                break;
-            case cymbal:
-            {
-                const float n = nextNoise (v.noise);
-                out = 0.5f * (n - (float) v.env);   // differentiated, like the hats, but long
-                v.env = n;
-                tau = 0.5;
-                break;
-            }
-            default:
-                out = nextNoise (v.noise);
-                tau = 0.07;
-                break;
+            if (slot == nullptr)
+                slot = &h;
         }
-
-        amp = std::exp (-t / tau);
-        v.phase += 1.0 / rate;
-        if (amp < 0.002)
-            v.active = false;
-        return (float) (amp * 0.9) * out;
+        else if (oldest == nullptr || h.order < oldest->order)
+        {
+            oldest = &h;
+        }
     }
 
-    // Pitched: three harmonics. A 3 ms linear attack, then a one-pole decay
-    // to a sustain, then a one-pole release once the note ends (or its layer
-    // is silenced). `phase` holds the elapsed seconds.
-    const double attack = 0.003, decayTau = 0.18, sustain = 0.55, releaseTau = 0.05;
+    if (slot == nullptr)
+    {
+        endHeld (*oldest, offset);
+        slot = oldest;
+    }
 
-    if (v.released)
-        v.env += (0.0 - v.env) * (1.0 - std::exp (-1.0 / (releaseTau * rate)));
-    else if (t < attack)
-        v.env = juce::jmin (1.0, v.env + 1.0 / (attack * rate));
-    else
-        v.env += (sustain - v.env) * (1.0 - std::exp (-1.0 / (decayTau * rate)));
+    slot->active = true;
+    slot->layer = note.layer;
+    slot->pitch = note.pitch;
+    slot->drum = note.drum;
+    slot->releaseSample = juce::jmax (note.offset, note.onset + kMinNoteSeconds) * sampleRate.load();
+    slot->order = ++holdCounter;
 
-    v.phase += 1.0 / rate;
-    const double ph = 2.0 * kPi * v.freq * v.phase;
-    const float wave = (float) (std::sin (ph) + 0.5 * std::sin (2.0 * ph) + 0.25 * std::sin (3.0 * ph)) * 0.6f;
-
-    if (v.released && v.env < 0.001)
-        v.active = false;
-
-    return (float) v.env * wave;
+    emit ({ offset, 0, true, note.layer, note.pitch, note.drum });
 }
 
 void Preview::beginDeclick (double fromSeconds)
 {
     fadeOutFromSeconds = fromSeconds;
     fadeOutRemaining = fadeLength;
-
-    for (auto& voice : voices)
-        if (voice.active && ! voice.fading)
-        {
-            voice.fading = true;
-            voice.fadeGain = 1.0f;
-        }
 }
 
 void Preview::render (juce::AudioBuffer<float>& buffer)
@@ -321,15 +252,13 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     buffer.clear();
 
     // Pick up a newly published snapshot, if the message thread isn't mid-swap.
+    bool snapshotChanged = false;
     if (snapshotLock.tryEnter())
     {
         if (pending != nullptr && pending.get() != current)
         {
             current = pending.get();
-            killAllVoices();
-            nextNote = 0;
-            fadeOutRemaining = fadeInRemaining = 0;
-            seenSeekGeneration = -1;   // re-find the scheduler position below
+            snapshotChanged = true;
         }
         snapshotLock.exit();
     }
@@ -337,26 +266,46 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     if (current == nullptr || numSamples <= 0)
         return;
 
+    if ((int) synthLeft.size() < numSamples)
+        return;   // prepare() wasn't called with a big enough block; stay silent rather than allocate
+
     const auto& snapshot = *current;
     const bool isPlaying = playing.load();
-    fadeLength = juce::jmax (32, (int) (0.006 * sampleRate));   // ~6 ms
+    const double rate = sampleRate.load();
+    fadeLength = juce::jmax (32, (int) (0.006 * rate));   // ~6 ms
 
-    // A jump (seek, scrub, stop, new notes): move the scheduler to the first
-    // note at or after the new position. If sound was playing, it doesn't
-    // stop dead: the old position and its voices fade out under the new one.
-    if (seenSeekGeneration != seekGeneration.load())
+    // The soundfont arriving (once): the simple synth lets go of what it
+    // was playing and rings out underneath the new one.
+    auto& synth = activeSynth();
+    if (&synth != lastSynth)
+    {
+        if (lastSynth != nullptr)
+            lastSynth->releaseAll();
+        lastSynth = &synth;
+        clearHeld();
+    }
+
+    // A jump (seek, scrub, stop) or new notes: move the scheduler to the
+    // first note at or after the position. If sound was playing, it doesn't
+    // stop dead: the audio's old position fades out under the new one, and
+    // the notes ring out through their releases.
+    if (snapshotChanged || seenSeekGeneration != seekGeneration.load())
     {
         seenSeekGeneration = seekGeneration.load();
 
         if (wasPlaying)
         {
-            beginDeclick (lastEndSeconds);   // the old position fades out...
-            fadeInRemaining = fadeLength;    // ...while the new one fades in
+            beginDeclick (lastEndSeconds);
+            fadeInRemaining = fadeLength;
+            synth.releaseAll();
         }
         else
         {
-            killAllVoices();
+            synth.cutAll();
+            fadeOutRemaining = fadeInRemaining = 0;
         }
+
+        clearHeld();
 
         const double pos = positionSeconds.load();
         nextNote = (size_t) std::distance (snapshot.notes.begin(),
@@ -367,70 +316,71 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     if (isPlaying && ! wasPlaying)
         fadeInRemaining = fadeLength;   // starting mid-song: fade in, don't step in
 
-    bool anyFading = false;
-    for (const auto& voice : voices)
-        anyFading = anyFading || (voice.active && voice.fading);
-
-    if (! isPlaying && fadeOutRemaining <= 0 && ! anyFading)
+    if (! isPlaying && fadeOutRemaining <= 0 && synth.isSilent() && simpleSynth.isSilent())
     {
         wasPlaying = false;
         return;
     }
 
     const double startSeconds = positionSeconds.load();
-    const double endSeconds = startSeconds + numSamples / sampleRate;
-    const double blockStartSample = startSeconds * sampleRate;
+    const double endSeconds = startSeconds + numSamples / rate;
+    const double blockStartSample = startSeconds * rate;
 
-    // Schedule note-ons that fall inside this block.
-    if (isPlaying)
-        while (nextNote < snapshot.notes.size() && snapshot.notes[nextNote].onset < endSeconds)
-        {
-            const auto& note = snapshot.notes[nextNote++];
-            if (note.onset >= startSeconds - 0.001 && isAudible (note.layer))
-                trigger (note, note.onset * sampleRate);
-        }
+    // This block's events: notes ending (or silenced by mute / solo), then
+    // notes starting. More than the array takes waits for the next block.
+    numEvents = 0;
 
-    // Synth, mono, then mixed into every channel.
-    if ((int) synthBuffer.size() < numSamples)
-        return;   // prepare() wasn't called with a big enough block; stay silent rather than allocate
-
-    std::fill (synthBuffer.begin(), synthBuffer.begin() + numSamples, 0.0f);
-    const float fadeStep = 1.0f / (float) fadeLength;
-
-    for (auto& voice : voices)
+    for (auto& h : held)
     {
-        if (! voice.active)
+        if (! h.active)
             continue;
 
-        // A fading voice belongs to the old timeline: it plays from the top
-        // of the block and only ramps down.
-        const int from = voice.fading ? 0 : juce::jlimit (0, numSamples, (int) std::ceil (voice.startSample - blockStartSample));
-        const bool silenced = ! isAudible (voice.layer);
-
-        for (int i = from; i < numSamples; ++i)
-        {
-            if (! voice.fading)
-            {
-                const double sampleIndex = blockStartSample + i;
-                if (! voice.released && (silenced || sampleIndex >= voice.releaseSample))
-                    voice.released = true;
-            }
-
-            float sample = kSynthLevel * renderVoice (voice, sampleRate);
-
-            if (voice.fading)
-            {
-                sample *= voice.fadeGain;
-                voice.fadeGain -= fadeStep;
-                if (voice.fadeGain <= 0.0f)
-                    voice.active = false;
-            }
-
-            synthBuffer[(size_t) i] += sample;
-            if (! voice.active)
-                break;
-        }
+        const bool silenced = ! isAudible (h.layer);
+        if (silenced || h.releaseSample < blockStartSample + numSamples)
+            endHeld (h, silenced ? 0 : juce::jlimit (0, numSamples - 1, (int) std::ceil (h.releaseSample - blockStartSample)));
     }
+
+    if (isPlaying)
+        while (nextNote < snapshot.notes.size() && snapshot.notes[nextNote].onset < endSeconds
+               && numEvents + 2 <= kMaxEvents)
+        {
+            const auto& note = snapshot.notes[nextNote++];
+            if (isAudible (note.layer))
+                startNote (note, juce::jlimit (0, numSamples - 1, (int) std::ceil (note.onset * rate - blockStartSample)));
+        }
+
+    std::sort (events.begin(), events.begin() + numEvents, [] (const Event& a, const Event& b)
+    {
+        return a.offset < b.offset || (a.offset == b.offset && a.sequence < b.sequence);
+    });
+
+    // The notes, rendered in segments split at every event so each lands
+    // on its sample.
+    float* left = synthLeft.data();
+    float* right = synthRight.data();
+    std::fill_n (left, numSamples, 0.0f);
+    std::fill_n (right, numSamples, 0.0f);
+
+    int pos = 0;
+    for (int e = 0; e < numEvents; ++e)
+    {
+        const auto& event = events[(size_t) e];
+        if (event.offset > pos)
+        {
+            synth.render (left + pos, right + pos, event.offset - pos, rate);
+            pos = event.offset;
+        }
+
+        if (event.on)
+            synth.noteOn (event.layer, event.pitch, event.drum);
+        else
+            synth.noteOff (event.layer, event.pitch, event.drum);
+    }
+    if (pos < numSamples)
+        synth.render (left + pos, right + pos, numSamples - pos, rate);
+
+    if (&synth != &simpleSynth && ! simpleSynth.isSilent())
+        simpleSynth.render (left, right, numSamples, rate);
 
     // Original audio, linearly interpolated from the file's rate: the new
     // position (fading in after a start or jump), plus the old position
@@ -438,6 +388,7 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     const float m = mix.load();
     const float audioGain = std::cos (m * (float) kPi * 0.5f) * snapshot.sourceGain;
     const float synthGain = std::sin (m * (float) kPi * 0.5f);
+    const float fadeStep = 1.0f / (float) fadeLength;
 
     const int fadeInAtStart = fadeInRemaining, fadeOutAtStart = fadeOutRemaining;
 
@@ -451,14 +402,14 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
             const int srcChannel = juce::jmin (ch, src.getNumChannels() - 1);
             const float* in = src.getReadPointer (srcChannel);
             const int srcLength = src.getNumSamples();
-            const double ratio = snapshot.source->sampleRate / sampleRate;
+            const double ratio = snapshot.source->sampleRate / rate;
 
-            const auto readAt = [&] (double pos) -> float
+            const auto readAt = [&] (double readPos) -> float
             {
-                const int index = (int) pos;
+                const int index = (int) readPos;
                 if (index < 0 || index + 1 >= srcLength)
                     return 0.0f;
-                const float frac = (float) (pos - index);
+                const float frac = (float) (readPos - index);
                 return in[index] + (in[index + 1] - in[index]) * frac;
             };
 
@@ -481,14 +432,20 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
             if (fadeOutAtStart > 0)
             {
                 double readPos = fadeOutFromSeconds * snapshot.source->sampleRate;
-                for (int i = 0, left = fadeOutAtStart; i < numSamples && left > 0; ++i, --left, readPos += ratio)
-                    out[i] += audioGain * (float) left * fadeStep * readAt (readPos);
+                for (int i = 0, remaining = fadeOutAtStart; i < numSamples && remaining > 0; ++i, --remaining, readPos += ratio)
+                    out[i] += audioGain * (float) remaining * fadeStep * readAt (readPos);
             }
         }
 
         if (synthGain > 0.0f)
-            for (int i = 0; i < numSamples; ++i)
-                out[i] += synthGain * synthBuffer[(size_t) i];
+        {
+            // Stereo to stereo; a mono output gets the two sides averaged.
+            if (numChannels == 1)
+                for (int i = 0; i < numSamples; ++i)
+                    out[i] += synthGain * 0.5f * (left[i] + right[i]);
+            else
+                juce::FloatVectorOperations::addWithMultiply (out, ch == 0 ? left : right, synthGain, numSamples);
+        }
 
         for (int i = 0; i < numSamples; ++i)
             out[i] = softLimit (out[i]);
@@ -499,7 +456,7 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     {
         const int used = juce::jmin (fadeOutRemaining, numSamples);
         fadeOutRemaining -= used;
-        fadeOutFromSeconds += used / sampleRate;
+        fadeOutFromSeconds += used / rate;
     }
     if (isPlaying)
         fadeInRemaining = juce::jmax (0, fadeInRemaining - numSamples);

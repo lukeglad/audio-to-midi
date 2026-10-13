@@ -4,6 +4,7 @@
 #include "Engine/Cleanup.h"
 #include "Engine/ModelDownloader.h"
 #include "Engine/Preview.h"
+#include "Engine/SoundFont.h"
 #include "Engine/TranscriptionService.h"
 #include "SourceAudio.h"
 
@@ -238,6 +239,7 @@ private:
     // job to notice its cancel.
     juce::SharedResourcePointer<atm::TranscriptionService> service;
     juce::SharedResourcePointer<atm::ModelDownloader> downloader;
+    juce::SharedResourcePointer<atm::SoundFontLibrary> soundFonts;
 
     // One thread, so decodes run one at a time. Declared last: it is
     // destroyed first, waiting out any running decode before the members
