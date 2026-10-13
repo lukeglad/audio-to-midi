@@ -92,6 +92,7 @@ target_sources (AudioToMidi PRIVATE
     Source/LayerChip.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
+    Source/QuantizeControl.cpp
     Source/TopBar.cpp)
 
 juce_add_binary_data (AudioToMidiBinaryData SOURCES

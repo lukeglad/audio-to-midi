@@ -99,22 +99,6 @@ TopBar::TopBar()
 
     for (auto* chip : { &halfChip, &doubleChip })
         addChildComponent (chip);
-
-    // Quantize: 0-100 %, half a percent per pixel, read as "quantize 50%".
-    quantizeValue.setRange (0.0, 100.0, 0.5);
-    quantizeValue.format = [] (double v) { return "quantize " + juce::String (juce::roundToInt (v)) + "%"; };
-    quantizeValue.parse = [] (const juce::String& text)
-    {
-        const auto digits = text.retainCharacters ("0123456789.");
-        return digits.isEmpty() ? std::numeric_limits<double>::quiet_NaN() : digits.getDoubleValue();
-    };
-    quantizeValue.onValueChanged = [this] (double v) { if (onQuantizeChanged) onQuantizeChanged (v / 100.0); };
-    quantizeValue.setFont (LnF::uiFont (kTextSize));
-    addChildComponent (quantizeValue);
-
-    gridButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    gridButton.onClick = [this] { showGridMenu(); };
-    addChildComponent (gridButton);
 }
 
 void TopBar::setFile (const juce::String& name, double seconds)
@@ -141,7 +125,7 @@ void TopBar::setTempo (bool has, double bpm)
 {
     hasTempo = has;
 
-    for (auto* c : std::initializer_list<juce::Component*> { &bpmValue, &halfChip, &doubleChip, &quantizeValue, &gridButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &bpmValue, &halfChip, &doubleChip })
         c->setVisible (has);
 
     if (! bpmValue.isBeingEdited())
@@ -165,34 +149,6 @@ void TopBar::setTransport (bool has, bool playing, float mix01)
         mixValue.setValue (mix01 * 100.0, juce::dontSendNotification);
 
     resized();
-}
-
-void TopBar::setQuantize (double amount01, atm::Grid newGrid)
-{
-    if (! quantizeValue.isBeingEdited())
-        quantizeValue.setValue (amount01 * 100.0, juce::dontSendNotification);
-
-    if (newGrid != grid || gridButton.getButtonText().isEmpty())
-    {
-        grid = newGrid;
-        gridButton.setButtonText (atm::gridName (grid));
-    }
-
-    resized();
-}
-
-void TopBar::showGridMenu()
-{
-    juce::PopupMenu menu;
-    for (const auto g : { atm::Grid::sixteenth, atm::Grid::eighth, atm::Grid::quarter })
-        menu.addItem ((int) g, atm::gridName (g), true, g == grid);
-
-    juce::Component::SafePointer<TopBar> safeThis (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (gridButton), [safeThis] (int result)
-    {
-        if (safeThis != nullptr && result != 0 && safeThis->onGridChanged)
-            safeThis->onGridChanged ((atm::Grid) result);
-    });
 }
 
 void TopBar::resized()
@@ -221,13 +177,6 @@ void TopBar::resized()
         chip->setBounds (left.removeFromLeft (chip->getIdealWidth()).withSizeKeepingCentre (chip->getIdealWidth(), Chip::kHeight));
         left.removeFromLeft (kGroupGap);
     }
-
-    // The quantize group, a wider gap on from the tempo group.
-    left.removeFromLeft (kGroupGap * 2);
-    const int quantizeW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), quantizeValue.getText())) + 6;
-    quantizeValue.setBounds (left.removeFromLeft (quantizeW));
-    left.removeFromLeft (kGroupGap);
-    gridButton.setBounds (left.removeFromLeft (gridButton.getIdealWidth()));
 }
 
 void TopBar::paint (juce::Graphics& g)
@@ -246,7 +195,7 @@ void TopBar::paint (juce::Graphics& g)
 
     // Centred on the bar when it fits, otherwise centred in the space left
     // between the controls either side, the name cut with an ellipsis.
-    const float leftEdge  = (float) (hasTempo ? gridButton.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
+    const float leftEdge  = (float) (hasTempo ? doubleChip.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
     const float rightEdge = (float) (modelButton.getX() - kSideInset);
     const float maxNameW  = juce::jmax (0.0f, rightEdge - leftEdge - gapW - lengthW);
     const float nameW     = juce::jmin (maxNameW, juce::GlyphArrangement::getStringWidth (font, fileName) + 1.0f);

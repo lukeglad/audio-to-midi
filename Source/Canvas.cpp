@@ -58,6 +58,14 @@ Canvas::Canvas()
     actionChip.onClick = [this] { if (onAction) onAction(); };
     addChildComponent (actionChip);
 
+    quantizeLabel.onAmountChanged = [this] (double v) { quantizeFader.setValue (v); if (onQuantizeChanged) onQuantizeChanged (v); };
+    quantizeLabel.onGridChanged   = [this] (atm::Grid g) { if (onGridChanged) onGridChanged (g); };
+    quantizeLabel.onPercentHovered = [this] { showFader(); };
+    quantizeLabel.onWidthChanged = [this] { layoutQuantize(); repaint (rollArea()); };
+    quantizeFader.onChanged = [this] (double v) { quantizeLabel.setValues (v, (atm::Grid) gridDivisions); if (onQuantizeChanged) onQuantizeChanged (v); };
+    addChildComponent (quantizeLabel);
+    addChildComponent (quantizeFader);
+
     strip.onMute = [this] (int layer) { if (onMuteToggled) onMuteToggled (layer); showStripFor (layer); };
     strip.onSolo = [this] (int layer) { if (onSoloToggled) onSoloToggled (layer); showStripFor (layer); };
     addChildComponent (strip);
@@ -382,6 +390,52 @@ void Canvas::resized()
 {
     layoutChips();
     layoutActionChip();
+    layoutQuantize();
+}
+
+void Canvas::setQuantize (double amount01, atm::Grid quantizeGrid, bool hasGrid)
+{
+    quantizeLabel.setValues (amount01, quantizeGrid);
+    quantizeFader.setValue (amount01);
+
+    const bool show = hasGrid && source != nullptr;
+    if (show != quantizeLabel.isVisible())
+    {
+        quantizeLabel.setVisible (show);
+        if (! show)
+            quantizeFader.setVisible (false);
+        repaint (rollArea());   // bar numbers make room for it
+    }
+}
+
+void Canvas::layoutQuantize()
+{
+    // Bottom-right of the roll, clear of the edge.
+    const auto roll = notesArea();
+    // Anchored at its right edge, so the grid stays put as the value's
+    // width changes and "quantize" moves instead.
+    const int labelW = quantizeLabel.getIdealWidth();
+    quantizeLabel.setBounds (roll.getRight() - 10 - labelW, roll.getBottom() - 8 - QuantizeLabel::kHeight,
+                             labelW, QuantizeLabel::kHeight);
+
+    const float height = (float) juce::jmax (1, getHeight());
+    quantizeLabel.setSurfaceColour (LnF::surfaceAt (LnF::background(), (float) quantizeLabel.getBounds().getCentreY() / height));
+
+    // The fader rises from the percentage; its bounds reach down to the label.
+    const auto pct = quantizeLabel.getPercentBounds() + quantizeLabel.getPosition();
+    quantizeFader.setBounds (pct.getCentreX() - QuantizeFader::kWidth / 2, quantizeLabel.getY() - QuantizeFader::kHeight - QuantizeFader::kGap,
+                             QuantizeFader::kWidth, QuantizeFader::kHeight + QuantizeFader::kGap);
+    quantizeFader.setSurfaceColour (LnF::surfaceAt (LnF::background(), (float) quantizeFader.getBounds().getCentreY() / height));
+}
+
+void Canvas::showFader()
+{
+    if (! quantizeLabel.isVisible())
+        return;
+
+    quantizeFader.setVisible (true);
+    quantizeFader.toFront (false);
+    startTimerHz (20);
 }
 
 void Canvas::layoutChips()
@@ -669,7 +723,10 @@ void Canvas::paintGrid (juce::Graphics& g) const
         // Bar 1 is the first downbeat; anything before it is a pickup and
         // goes unnumbered.
         const int barNumber = fromDownbeat / grid->beatsPerBar + 1;
-        if (bar && drawNumbers && fromDownbeat >= 0)
+        // ...and skips the stretch under the quantize label.
+        const bool underLabel = quantizeLabel.isVisible() && x + 20.0f > (float) quantizeLabel.getX() - 4.0f
+                             && x < (float) quantizeLabel.getRight() + 4.0f;
+        if (bar && drawNumbers && fromDownbeat >= 0 && ! underLabel)
         {
             g.setColour (LnF::ink().withAlpha (0.30f));
             g.drawText (juce::String (barNumber), juce::Rectangle<float> (x + 3.0f, area.getBottom() - 15.0f, 40.0f, 13.0f),
@@ -986,7 +1043,8 @@ void Canvas::showStripFor (int layer)
 
 void Canvas::hideStrip()
 {
-    stopTimer();
+    if (! quantizeFader.isVisible())
+        stopTimer();
     if (strip.isVisible())
     {
         strip.setVisible (false);
@@ -996,22 +1054,29 @@ void Canvas::hideStrip()
 
 void Canvas::timerCallback()
 {
-    // Polled rather than tracked through enter/exit pairs: the strip stays
-    // while the pointer is on it or on its chip, and goes once it's on
-    // neither.
-    if (! strip.isVisible())
+    // Polled rather than tracked through enter/exit pairs: a hover surface
+    // stays while the pointer is on it or on what raised it, and goes once
+    // it's on neither. A drag in progress keeps the fader up.
+    const auto mouse = getMouseXYRelative();
+
+    if (strip.isVisible())
     {
-        stopTimer();
-        return;
+        const auto* layer = findLayer (strip.getLayer());
+        const bool overChip  = layer != nullptr && layer->chip->getBounds().contains (mouse);
+        if (! overChip && ! strip.getBounds().contains (mouse))
+            hideStrip();
     }
 
-    const auto* layer = findLayer (strip.getLayer());
-    const auto mouse = getMouseXYRelative();
-    const bool overChip  = layer != nullptr && layer->chip->getBounds().contains (mouse);
-    const bool overStrip = strip.getBounds().contains (mouse);
+    if (quantizeFader.isVisible())
+    {
+        const auto pct = quantizeLabel.getPercentBounds() + quantizeLabel.getPosition();
+        const bool dragging = quantizeFader.isMouseButtonDown();
+        if (! dragging && ! quantizeFader.getBounds().contains (mouse) && ! pct.expanded (2).contains (mouse))
+            quantizeFader.setVisible (false);
+    }
 
-    if (! overChip && ! overStrip)
-        hideStrip();
+    if (! strip.isVisible() && ! quantizeFader.isVisible())
+        stopTimer();
 }
 
 Canvas::LayerStrip::LayerStrip()

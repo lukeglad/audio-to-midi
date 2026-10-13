@@ -31,13 +31,13 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     topBar.onBpmChanged = [this] (double bpm) { processorRef.setBpm (bpm); };
     topBar.onHalve  = [this] { processorRef.halveTempo(); };
     topBar.onDouble = [this] { processorRef.doubleTempo(); };
-    topBar.onQuantizeChanged = [this] (double amount)
+    canvas.onQuantizeChanged = [this] (double amount)
     {
         auto settings = processorRef.getCleanup();
         settings.quantize = amount;
         processorRef.setCleanup (settings);
     };
-    topBar.onGridChanged = [this] (atm::Grid grid)
+    canvas.onGridChanged = [this] (atm::Grid grid)
     {
         auto settings = processorRef.getCleanup();
         settings.grid = grid;
@@ -209,7 +209,7 @@ void AudioToMidiEditor::refreshFromProcessor()
     const auto& tempo = processorRef.getTempo();
     topBar.setTempo (tempo.hasEstimate && source != nullptr, tempo.bpm);
 
-    topBar.setQuantize (processorRef.getCleanup().quantize, processorRef.getCleanup().grid);
+    canvas.setQuantize (processorRef.getCleanup().quantize, processorRef.getCleanup().grid, tempo.hasEstimate);
     canvas.setGridDivisions ((int) processorRef.getCleanup().grid);
 
     auto& preview = processorRef.getPreview();

@@ -8,6 +8,7 @@
 
 #include "Chip.h"
 #include "LayerChip.h"
+#include "QuantizeControl.h"
 #include "SourceAudio.h"
 
 //==============================================================================
@@ -66,6 +67,12 @@ public:
 
     /** Lines per beat drawn between the beat lines: the quantize grid. */
     void setGridDivisions (int);
+
+    /** The quantize control at the roll's bottom-right; hidden without a
+        tempo grid to quantize to. */
+    void setQuantize (double amount01, atm::Grid, bool hasGrid);
+    std::function<void (double amount01)> onQuantizeChanged;
+    std::function<void (atm::Grid)> onGridChanged;
 
     /** The preview playhead, in seconds; negative hides it. Copper: the
         brief's second reserved role for the accent. */
@@ -132,6 +139,8 @@ private:
     void timerCallback() override;
     void showStripFor (int layer);
     void hideStrip();
+    void layoutQuantize();
+    void showFader();
 
     struct Layer
     {
@@ -189,6 +198,8 @@ private:
     int notesVersion = -1;
     std::vector<atm::MidiNote> notes;
     LayerStrip strip;
+    QuantizeLabel quantizeLabel;
+    QuantizeFader quantizeFader;
     std::vector<Layer> layers;                // ordered by key: GM family order, drums last
     int pitchLow = 48, pitchHigh = 72;        // [low, high), whole octaves; grows only
     bool hasPitchRange = false;
