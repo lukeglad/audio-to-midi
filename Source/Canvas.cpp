@@ -398,7 +398,7 @@ juce::Rectangle<float> Canvas::noteBounds (const atm::MidiNote& note) const
 void Canvas::resized()
 {
     // Play, alone in the band's corner above the keys, centred in it.
-    playButton.setBounds (juce::Rectangle<int> (0, 0, kKeysW + kTimeInset, kBandH).withSizeKeepingCentre (32, 32));
+    playButton.setBounds (juce::Rectangle<int> (0, 0, kKeysW + kTimeInset, kBandH).withSizeKeepingCentre (40, 40));
 
     layoutChips();
     layoutActionChip();
@@ -1051,6 +1051,15 @@ void Canvas::mouseUp (const juce::MouseEvent& e)
 
 void Canvas::showStripFor (int layer)
 {
+    // With one instrument, mute and solo do nothing the mix doesn't: solo on
+    // the only layer changes nothing, and muting it is mix 0%. The strip
+    // appears once a second layer exists.
+    if (layers.size() < 2)
+    {
+        hideStrip();
+        return;
+    }
+
     const auto* found = findLayer (layer);
     if (found == nullptr)
         return;

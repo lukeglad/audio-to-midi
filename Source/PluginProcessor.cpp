@@ -360,6 +360,15 @@ void AudioToMidiProcessor::startTranscription()
     transcription.model = atm::preferredModel();
 
     tempo = {};   // a new run gets a fresh tempo; cleanup settings carry over
+
+    // Mute and solo belong to a transcription's layers: a new run starts with
+    // every layer audible. (Otherwise a layer muted on the last file could
+    // stay muted on a one-instrument file, where there's no strip to undo it.)
+    for (int layer = 0; layer < atm::Preview::kLayerSlots; ++layer)
+    {
+        preview.setMuted (layer, false);
+        preview.setSoloed (layer, false);
+    }
     ++notesVersion;
 
     if (source == nullptr)
