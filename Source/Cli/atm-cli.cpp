@@ -42,6 +42,7 @@ namespace
         print ("       atm-cli --tempo-check        (synthetic click tracks, no model needed)");
         print ("       atm-cli --velocity-check     (synthetic tones at known levels, no model needed)");
         print ("       atm-cli --state-check FILE   (what the project would store for FILE, and a round trip)");
+        print ("       atm-cli --scrub-check FILE   (seek every 50 ms while playing: no clicks at the jumps)");
         return 2;
     }
 
@@ -263,6 +264,115 @@ namespace
     }
 }
 
+namespace
+{
+    /** Plays FILE through the preview (original audio only, the hardest case:
+        any jump in a waveform is a step) while seeking to a random place every
+        50 ms, like a fast scrub, and also starts and stops it. The largest
+        sample-to-sample step within 2 ms of a jump must stay under 1.5x the
+        largest step of uninterrupted playback, i.e. no click louder than the
+        music itself. */
+    int scrubCheck (const juce::File& file)
+    {
+        const auto decoded = decodeAudioFile (file, [] { return false; });
+        if (decoded.audio == nullptr)
+        {
+            print ("decode failed: " + decoded.error);
+            return 1;
+        }
+
+        constexpr double rate = 48000.0;
+        constexpr int block = 256;
+        const double length = decoded.audio->getLengthSeconds();
+
+        const auto run = [&] (bool scrub, float& worstStep, float& worstAtJump)
+        {
+            atm::Preview preview;
+            preview.prepare (rate, block);
+            preview.setSource (decoded.audio);
+            preview.setMix (0.0f);
+            preview.play();
+
+            juce::AudioBuffer<float> chunk (2, block);
+            juce::Random random (11);
+            float previous = 0.0f;
+            int sinceJump = 1 << 20;
+            worstStep = worstAtJump = 0.0f;
+            const int jumpEvery = (int) (0.05 * rate / block);
+            const int total = (int) (juce::jmin (length, 8.0) * rate / block);
+
+            for (int b = 0; b < total; ++b)
+            {
+                if (scrub && b > 0 && b % jumpEvery == 0)
+                {
+                    preview.seek (random.nextDouble() * length * 0.9);
+                    sinceJump = 0;
+                }
+
+                preview.render (chunk);
+                for (int i = 0; i < block; ++i, ++sinceJump)
+                {
+                    const float v = chunk.getSample (0, i);
+                    const float step = std::abs (v - previous);
+                    previous = v;
+                    worstStep = juce::jmax (worstStep, step);
+                    if (sinceJump < (int) (0.002 * rate))
+                        worstAtJump = juce::jmax (worstAtJump, step);
+                }
+            }
+        };
+
+        float normalStep = 0.0f, unused = 0.0f, scrubStep = 0.0f, jumpStep = 0.0f;
+        run (false, normalStep, unused);
+        run (true, scrubStep, jumpStep);
+
+        const bool smooth = jumpStep <= normalStep * 1.5f;
+        print (juce::String::formatted ("scrub:    largest step in normal playback %.4f, at a jump %.4f (ratio %.2f, allowed 1.50): %s",
+                                        normalStep, jumpStep, jumpStep / juce::jmax (1.0e-6f, normalStep), smooth ? "ok" : "WRONG"));
+
+        // The synth must come back after a drag (a seek every block, as a
+        // real scrub does): a fade-out flag left on a reused voice once
+        // silenced every note after the first scrub.
+        float synthBefore = 0.0f, synthAfter = 0.0f;
+        {
+            atm::Preview preview;
+            preview.prepare (rate, block);
+            preview.setSource (decoded.audio);
+            std::vector<atm::MidiNote> notes;
+            for (int i = 0; i < 60; ++i)
+                notes.push_back ({ i * 0.25, i * 0.25 + 0.2, 60 + i % 12, 0, false, 100 });
+            preview.setNotes (notes);
+            preview.setMix (1.0f);
+            preview.play();
+
+            juce::AudioBuffer<float> chunk (2, block);
+            const auto rms = [&] (double seconds, bool scrub)
+            {
+                double sum = 0.0;
+                const int blocks = (int) (seconds * rate / block);
+                for (int b = 0; b < blocks; ++b)
+                {
+                    if (scrub)
+                        preview.seek (1.0 + 0.004 * b);
+                    preview.render (chunk);
+                    for (int i = 0; i < block; ++i)
+                        sum += chunk.getSample (0, i) * chunk.getSample (0, i);
+                }
+                return (float) std::sqrt (sum / juce::jmax (1, blocks * block));
+            };
+
+            synthBefore = rms (1.0, false);
+            rms (0.5, true);
+            synthAfter = rms (1.0, false);
+        }
+
+        const bool recovers = synthAfter >= synthBefore * 0.5f;
+        print (juce::String::formatted ("scrub:    synth level before a drag %.4f, after %.4f: %s",
+                                        synthBefore, synthAfter, recovers ? "ok" : "WRONG (the synth went silent)"));
+        return smooth && recovers ? 0 : 1;
+    }
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // message manager, for the service's WeakReferences
@@ -273,6 +383,8 @@ int main (int argc, char* argv[])
         return tempoCheck();
     if (argc == 2 && juce::String (argv[1]) == "--velocity-check")
         return velocityCheck();
+    if (argc == 3 && juce::String (argv[1]) == "--scrub-check")
+        return scrubCheck (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
     if (argc == 3 && juce::String (argv[1]) == "--state-check")
         return stateCheck (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
 

@@ -8,6 +8,7 @@
 
 #include "Chip.h"
 #include "LayerChip.h"
+#include "PlayButton.h"
 #include "QuantizeControl.h"
 #include "SourceAudio.h"
 
@@ -85,6 +86,10 @@ public:
     /** Click in the waveform band or ruler: locate the preview. */
     std::function<void (double seconds)> onSeek;
 
+    /** The play / stop glyph in the band's corner, above the keys. */
+    void setPlaying (bool);
+    std::function<void()> onPlayClicked;
+
     /** Re-reads the preview state into the chips and the roll. */
     void refreshPreviewState();
 
@@ -101,6 +106,7 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
@@ -190,6 +196,7 @@ private:
     Status status;
     double progressTime = -1.0;
     double playheadTime = -1.0;
+    bool scrubbing = false;   // a press that began in the band or ruler
     std::optional<atm::TempoEstimate> grid;
     int gridDivisions = 4;   // lines per beat: the quantize grid (1/16 = 4)
     Chip actionChip;
@@ -198,6 +205,7 @@ private:
     int notesVersion = -1;
     std::vector<atm::MidiNote> notes;
     LayerStrip strip;
+    PlayButton playButton;
     QuantizeLabel quantizeLabel;
     QuantizeFader quantizeFader;
     std::vector<Layer> layers;                // ordered by key: GM family order, drums last

@@ -46,6 +46,7 @@ struct TempoState
     atm::TempoEstimate detected;
     double bpm = 120.0;          // what the user sees; follows `detected` until edited
     bool userEdited = false;
+    double alignedBpm = 0.0;     // the tempo the downbeat was last placed for (see setBpm)
 
     /** The detected grid with the user's tempo applied. */
     atm::TempoEstimate effective() const noexcept
@@ -149,9 +150,10 @@ public:
     // Tempo. Message thread only.
 
     const TempoState& getTempo() const noexcept { return tempo; }
+    /** The user's tempo. Landing on about half or double the tempo the grid
+        was last aligned for re-places the downbeat so bar 1 stays on a real
+        beat (what the removed ½ / ×2 buttons did). */
     void setBpm (double bpm);
-    void halveTempo();
-    void doubleTempo();
 
     //==========================================================================
     // Cleanup. Message thread only.

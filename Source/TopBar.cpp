@@ -41,17 +41,6 @@ int TopBar::MenuButton::getIdealWidth() const
     return juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), getButtonText())) + 16;
 }
 
-void TopBar::PlayButton::paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown)
-{
-    auto* icon = playing ? stopIcon.get() : playIcon.get();
-    if (icon == nullptr)
-        return;
-
-    const float alpha = (isMouseOver || isButtonDown) ? 1.0f : 0.75f;
-    icon->drawWithin (g, getLocalBounds().toFloat().withSizeKeepingCentre (14.0f, 14.0f),
-                      juce::RectanglePlacement::centred, alpha);
-}
-
 //==============================================================================
 TopBar::TopBar()
 {
@@ -61,9 +50,6 @@ TopBar::TopBar()
     modelButton.onClick = [this] { if (onModelClicked) onModelClicked(); };
     addAndMakeVisible (modelButton);
 
-    playButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    playButton.onClick = [this] { if (onPlayClicked) onPlayClicked(); };
-    addChildComponent (playButton);
 
     // Mix: 0 = the original audio, 100 = the synth, read as "mix 50%".
     mixValue.setRange (0.0, 100.0, 0.5);
@@ -94,11 +80,7 @@ TopBar::TopBar()
     bpmValue.setFont (LnF::uiFont (kTextSize));
     addChildComponent (bpmValue);
 
-    halfChip.onClick   = [this] { if (onHalve)  onHalve(); };
-    doubleChip.onClick = [this] { if (onDouble) onDouble(); };
 
-    for (auto* chip : { &halfChip, &doubleChip })
-        addChildComponent (chip);
 }
 
 void TopBar::setFile (const juce::String& name, double seconds)
@@ -125,7 +107,7 @@ void TopBar::setTempo (bool has, double bpm)
 {
     hasTempo = has;
 
-    for (auto* c : std::initializer_list<juce::Component*> { &bpmValue, &halfChip, &doubleChip })
+    for (auto* c : std::initializer_list<juce::Component*> { &bpmValue })
         c->setVisible (has);
 
     if (! bpmValue.isBeingEdited())
@@ -134,17 +116,11 @@ void TopBar::setTempo (bool has, double bpm)
     resized();   // the readout's width follows its text
 }
 
-void TopBar::setTransport (bool has, bool playing, float mix01)
+void TopBar::setMix (bool has, float mix01)
 {
     hasFile = has;
-    playButton.setVisible (has);
     mixValue.setVisible (has);
 
-    if (playing != playButton.playing)
-    {
-        playButton.playing = playing;
-        playButton.repaint();
-    }
     if (! mixValue.isBeingEdited())
         mixValue.setValue (mix01 * 100.0, juce::dontSendNotification);
 
@@ -158,11 +134,9 @@ void TopBar::resized()
 
     auto left = getLocalBounds().withTrimmedLeft (kSideInset);
 
-    // The transport first; the tempo group a wider gap on from it.
+    // The mix first; the tempo group a wider gap on from it.
     if (hasFile)
     {
-        playButton.setBounds (left.removeFromLeft (16));
-        left.removeFromLeft (kGroupGap);
         const int mixW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), mixValue.getText())) + 6;
         mixValue.setBounds (left.removeFromLeft (mixW));
         left.removeFromLeft (kGroupGap * 2);
@@ -170,13 +144,6 @@ void TopBar::resized()
 
     const int bpmW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), bpmValue.getText())) + 6;
     bpmValue.setBounds (left.removeFromLeft (bpmW));
-    left.removeFromLeft (kGroupGap);
-
-    for (auto* chip : { &halfChip, &doubleChip })
-    {
-        chip->setBounds (left.removeFromLeft (chip->getIdealWidth()).withSizeKeepingCentre (chip->getIdealWidth(), Chip::kHeight));
-        left.removeFromLeft (kGroupGap);
-    }
 }
 
 void TopBar::paint (juce::Graphics& g)
@@ -195,7 +162,7 @@ void TopBar::paint (juce::Graphics& g)
 
     // Centred on the bar when it fits, otherwise centred in the space left
     // between the controls either side, the name cut with an ellipsis.
-    const float leftEdge  = (float) (hasTempo ? doubleChip.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
+    const float leftEdge  = (float) (hasTempo ? bpmValue.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
     const float rightEdge = (float) (modelButton.getX() - kSideInset);
     const float maxNameW  = juce::jmax (0.0f, rightEdge - leftEdge - gapW - lengthW);
     const float nameW     = juce::jmin (maxNameW, juce::GlyphArrangement::getStringWidth (font, fileName) + 1.0f);

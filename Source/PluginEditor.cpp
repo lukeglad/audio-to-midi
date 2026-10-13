@@ -29,8 +29,6 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
 
     topBar.onModelClicked = [this] { showModelMenu(); };
     topBar.onBpmChanged = [this] (double bpm) { processorRef.setBpm (bpm); };
-    topBar.onHalve  = [this] { processorRef.halveTempo(); };
-    topBar.onDouble = [this] { processorRef.doubleTempo(); };
     canvas.onQuantizeChanged = [this] (double amount)
     {
         auto settings = processorRef.getCleanup();
@@ -46,7 +44,7 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
 
     // The preview.
     auto& preview = processorRef.getPreview();
-    topBar.onPlayClicked = [this, &preview] { preview.togglePlay(); refreshFromProcessor(); };
+    canvas.onPlayClicked = [this, &preview] { preview.togglePlay(); refreshFromProcessor(); };
     topBar.onMixChanged = [&preview] (float mix) { preview.setMix (mix); };
     canvas.onSeek = [this, &preview] (double seconds) { preview.seek (seconds); refreshFromProcessor(); };
     canvas.isLayerMuted   = [&preview] (int layer) { return preview.isMuted (layer); };
@@ -213,7 +211,8 @@ void AudioToMidiEditor::refreshFromProcessor()
     canvas.setGridDivisions ((int) processorRef.getCleanup().grid);
 
     auto& preview = processorRef.getPreview();
-    topBar.setTransport (source != nullptr, preview.isPlaying(), preview.getMix());
+    topBar.setMix (source != nullptr, preview.getMix());
+    canvas.setPlaying (preview.isPlaying());
     canvas.setPlayhead (source != nullptr && (preview.isPlaying() || preview.getPosition() > 0.0) ? preview.getPosition() : -1.0);
     canvas.setGrid (tempo.hasEstimate && source != nullptr ? std::optional (tempo.effective()) : std::nullopt);
     canvas.setLoadStatus (processorRef.getLoadingFileName(), processorRef.getLoadError());

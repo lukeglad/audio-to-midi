@@ -330,6 +330,7 @@ void AudioToMidiProcessor::applyRestore (PendingRestore&& restore)
     transcription.notes = std::move (restore.notes);
 
     tempo = restore.tempo;
+    tempo.alignedBpm = tempo.bpm;
     cleanup = restore.cleanup;
 
     preview.setMix (restore.mix);
@@ -528,7 +529,10 @@ void AudioToMidiProcessor::onJobTempo (int generation, atm::TempoEstimate estima
     tempo.detected = estimate;
     tempo.hasEstimate = true;
     if (! tempo.userEdited)
+    {
         tempo.bpm = estimate.bpm;
+        tempo.alignedBpm = estimate.bpm;
+    }
 
     notesChanged();   // quantize follows the grid
 }
@@ -570,39 +574,36 @@ void AudioToMidiProcessor::setBpm (double bpm)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    tempo.bpm = juce::jlimit (20.0, 400.0, bpm);
+    bpm = juce::jlimit (20.0, 400.0, bpm);
+    auto& d = tempo.detected;
+    const double aligned = tempo.alignedBpm > 0.0 ? tempo.alignedBpm : tempo.bpm;
+    const auto near = [] (double a, double b) { return std::abs (a / b - 1.0) < 0.03; };
+
+    // Half the tempo: every other beat remains. If the downbeat was on an odd
+    // beat, shift the grid by one old beat so bar 1 is still a beat.
+    if (near (bpm, aligned * 0.5))
+    {
+        if (d.downbeat % 2 != 0)
+        {
+            d.firstBeat += 60.0 / aligned;
+            d.downbeat = (d.downbeat - 1) / 2;
+        }
+        else
+        {
+            d.downbeat /= 2;
+        }
+        tempo.alignedBpm = bpm;
+    }
+    // Double the tempo: every beat splits in two; the downbeat keeps its place.
+    else if (near (bpm, aligned * 2.0))
+    {
+        d.downbeat = (d.downbeat * 2) % juce::jmax (1, d.beatsPerBar);
+        tempo.alignedBpm = bpm;
+    }
+
+    tempo.bpm = bpm;
     tempo.userEdited = true;
     notesChanged();
-}
-
-void AudioToMidiProcessor::halveTempo()
-{
-    JUCE_ASSERT_MESSAGE_THREAD
-
-    // Every other beat remains. If the downbeat was on an odd beat, shift the
-    // grid by one old beat so it stays on the grid.
-    auto& d = tempo.detected;
-    const double oldBeat = 60.0 / tempo.bpm;
-    if (d.downbeat % 2 != 0)
-    {
-        d.firstBeat += oldBeat;
-        d.downbeat = (d.downbeat - 1) / 2;
-    }
-    else
-    {
-        d.downbeat /= 2;
-    }
-
-    setBpm (tempo.bpm * 0.5);
-}
-
-void AudioToMidiProcessor::doubleTempo()
-{
-    JUCE_ASSERT_MESSAGE_THREAD
-
-    auto& d = tempo.detected;
-    d.downbeat = (d.downbeat * 2) % d.beatsPerBar;
-    setBpm (tempo.bpm * 2.0);
 }
 
 void AudioToMidiProcessor::onJobNotes (int generation, std::vector<msl::Note> newNotes, double finalizedThrough)

@@ -80,12 +80,25 @@ namespace atm
             double env = 0.0;
             bool released = false;
             juce::uint32 noise = 1;
+
+            // Set by a jump (seek, stop): the voice fades out over the
+            // declick time instead of being cut, wherever the timeline went.
+            bool fading = false;
+            float fadeGain = 1.0f;
         };
 
         void publish (Snapshot);
         void trigger (const MidiNote&, double atSample);
         float renderVoice (Voice&, double sampleRate);
         void killAllVoices();
+        void beginDeclick (double fromSeconds);
+
+        // Declick: a jump in the timeline (seek, scrub, stop) crossfades over
+        // a few ms instead of stepping, and starting playback fades in.
+        bool wasPlaying = false;
+        double lastEndSeconds = 0.0;      // where the last rendered block ended
+        double fadeOutFromSeconds = 0.0;  // the old position, still playing out
+        int fadeOutRemaining = 0, fadeInRemaining = 0, fadeLength = 256;
 
         // Snapshot handoff. `pending` is what the message thread last
         // published; the audio thread takes it under a try-lock and keeps a
@@ -99,6 +112,10 @@ namespace atm
 
         std::atomic<bool> playing { false };
         std::atomic<double> positionSeconds { 0.0 };
+
+        // Where the current (or last) play began: stop returns here, and so
+        // does reaching the end. A seek moves it too. 0 for a new file.
+        std::atomic<double> playStartSeconds { 0.0 };
         std::atomic<int> seekGeneration { 0 };
         int seenSeekGeneration = 0;
         std::atomic<float> mix { 0.5f };

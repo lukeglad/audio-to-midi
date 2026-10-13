@@ -58,6 +58,9 @@ Canvas::Canvas()
     actionChip.onClick = [this] { if (onAction) onAction(); };
     addChildComponent (actionChip);
 
+    playButton.onClick = [this] { if (onPlayClicked) onPlayClicked(); };
+    addChildComponent (playButton);
+
     quantizeLabel.onAmountChanged = [this] (double v) { quantizeFader.setValue (v); if (onQuantizeChanged) onQuantizeChanged (v); };
     quantizeLabel.onGridChanged   = [this] (atm::Grid g) { if (onGridChanged) onGridChanged (g); };
     quantizeLabel.onPercentHovered = [this] { showFader(); };
@@ -92,7 +95,13 @@ void Canvas::setSource (std::shared_ptr<const SourceAudio> newSource)
         return;
 
     source = std::move (newSource);
+    playButton.setVisible (source != nullptr);
     repaint();
+}
+
+void Canvas::setPlaying (bool playing)
+{
+    playButton.setPlaying (playing);
 }
 
 void Canvas::setLoadStatus (const juce::String& loading, const juce::String& error)
@@ -388,6 +397,9 @@ juce::Rectangle<float> Canvas::noteBounds (const atm::MidiNote& note) const
 //==============================================================================
 void Canvas::resized()
 {
+    // Play, alone in the band's corner above the keys, centred in it.
+    playButton.setBounds (juce::Rectangle<int> (0, 0, kKeysW + kTimeInset, kBandH).withSizeKeepingCentre (32, 32));
+
     layoutChips();
     layoutActionChip();
     layoutQuantize();
@@ -988,8 +1000,21 @@ void Canvas::mouseMove (const juce::MouseEvent& e)
 
 void Canvas::mouseDown (const juce::MouseEvent& e)
 {
-    // The band and the ruler locate the preview; the roll is for notes.
-    if (source != nullptr && onSeek && e.y < rollArea().getY() && e.x >= kKeysW && ! e.mods.isPopupMenu())
+    // The band and the ruler locate the preview, and dragging there scrubs;
+    // the roll is for notes.
+    scrubbing = source != nullptr && onSeek && e.y < rollArea().getY() && e.x >= kKeysW + kTimeInset
+             && ! e.mods.isPopupMenu();
+
+    if (scrubbing)
+        onSeek (xToTime (e.position.x));
+}
+
+void Canvas::mouseDrag (const juce::MouseEvent& e)
+{
+    // The playhead follows the pointer for as long as the press that began in
+    // the band or ruler lasts, wherever the pointer wanders (clamped to the
+    // file). While playing, the audio jumps along with it.
+    if (scrubbing && onSeek)
         onSeek (xToTime (e.position.x));
 }
 
@@ -1005,6 +1030,9 @@ void Canvas::mouseExit (const juce::MouseEvent&)
 
 void Canvas::mouseUp (const juce::MouseEvent& e)
 {
+    if (std::exchange (scrubbing, false))
+        return;
+
     // Clicking a note selects its layer, the same as clicking its chip.
     if (e.mouseWasDraggedSinceMouseDown() || e.mods.isPopupMenu())
         return;

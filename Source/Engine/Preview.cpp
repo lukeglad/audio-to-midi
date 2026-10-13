@@ -117,17 +117,26 @@ void Preview::play()
     if (positionSeconds.load() >= length.load())
         seek (0.0);
 
+    playStartSeconds.store (positionSeconds.load());
     playing.store (true);
 }
 
 void Preview::stop()
 {
-    playing.store (false);
+    // Back to where this play began, like a DAW transport: stop means "again
+    // from there", and clicking the waveform is how to start somewhere else.
+    if (playing.exchange (false))
+    {
+        positionSeconds.store (playStartSeconds.load());
+        ++seekGeneration;
+    }
 }
 
 void Preview::seek (double seconds)
 {
-    positionSeconds.store (juce::jlimit (0.0, juce::jmax (0.0, length.load()), seconds));
+    const double clamped = juce::jlimit (0.0, juce::jmax (0.0, length.load()), seconds);
+    positionSeconds.store (clamped);
+    playStartSeconds.store (clamped);   // the next stop returns here
     ++seekGeneration;
 }
 
@@ -174,7 +183,11 @@ void Preview::prepare (double newSampleRate, int maxBlockSize)
 void Preview::killAllVoices()
 {
     for (auto& voice : voices)
+    {
         voice.active = false;
+        voice.fading = false;
+        voice.fadeGain = 1.0f;
+    }
 }
 
 void Preview::trigger (const MidiNote& note, double atSample)
@@ -194,6 +207,8 @@ void Preview::trigger (const MidiNote& note, double atSample)
     auto& v = *chosen;
     v.active = true;
     v.released = false;
+    v.fading = false;      // a reused voice starts fresh, whatever it was doing
+    v.fadeGain = 1.0f;
     v.layer = note.layer;
     v.pitch = note.pitch;
     v.drum = note.drum;
@@ -286,6 +301,19 @@ float Preview::renderVoice (Voice& v, double rate)
     return (float) v.env * wave;
 }
 
+void Preview::beginDeclick (double fromSeconds)
+{
+    fadeOutFromSeconds = fromSeconds;
+    fadeOutRemaining = fadeLength;
+
+    for (auto& voice : voices)
+        if (voice.active && ! voice.fading)
+        {
+            voice.fading = true;
+            voice.fadeGain = 1.0f;
+        }
+}
+
 void Preview::render (juce::AudioBuffer<float>& buffer)
 {
     const int numSamples = buffer.getNumSamples();
@@ -300,6 +328,7 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
             current = pending.get();
             killAllVoices();
             nextNote = 0;
+            fadeOutRemaining = fadeInRemaining = 0;
             seenSeekGeneration = -1;   // re-find the scheduler position below
         }
         snapshotLock.exit();
@@ -310,64 +339,107 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
 
     const auto& snapshot = *current;
     const bool isPlaying = playing.load();
+    fadeLength = juce::jmax (32, (int) (0.006 * sampleRate));   // ~6 ms
 
-    // A seek (or new notes): move the scheduler to the first note at or after
-    // the position and silence whatever was sounding.
+    // A jump (seek, scrub, stop, new notes): move the scheduler to the first
+    // note at or after the new position. If sound was playing, it doesn't
+    // stop dead: the old position and its voices fade out under the new one.
     if (seenSeekGeneration != seekGeneration.load())
     {
         seenSeekGeneration = seekGeneration.load();
-        killAllVoices();
+
+        if (wasPlaying)
+        {
+            beginDeclick (lastEndSeconds);   // the old position fades out...
+            fadeInRemaining = fadeLength;    // ...while the new one fades in
+        }
+        else
+        {
+            killAllVoices();
+        }
+
         const double pos = positionSeconds.load();
         nextNote = (size_t) std::distance (snapshot.notes.begin(),
                                            std::lower_bound (snapshot.notes.begin(), snapshot.notes.end(), pos,
                                                              [] (const MidiNote& n, double p) { return n.onset < p; }));
     }
 
-    if (! isPlaying)
+    if (isPlaying && ! wasPlaying)
+        fadeInRemaining = fadeLength;   // starting mid-song: fade in, don't step in
+
+    bool anyFading = false;
+    for (const auto& voice : voices)
+        anyFading = anyFading || (voice.active && voice.fading);
+
+    if (! isPlaying && fadeOutRemaining <= 0 && ! anyFading)
+    {
+        wasPlaying = false;
         return;
+    }
 
     const double startSeconds = positionSeconds.load();
     const double endSeconds = startSeconds + numSamples / sampleRate;
     const double blockStartSample = startSeconds * sampleRate;
 
     // Schedule note-ons that fall inside this block.
-    while (nextNote < snapshot.notes.size() && snapshot.notes[nextNote].onset < endSeconds)
-    {
-        const auto& note = snapshot.notes[nextNote++];
-        if (note.onset >= startSeconds - 0.001 && isAudible (note.layer))
-            trigger (note, note.onset * sampleRate);
-    }
+    if (isPlaying)
+        while (nextNote < snapshot.notes.size() && snapshot.notes[nextNote].onset < endSeconds)
+        {
+            const auto& note = snapshot.notes[nextNote++];
+            if (note.onset >= startSeconds - 0.001 && isAudible (note.layer))
+                trigger (note, note.onset * sampleRate);
+        }
 
     // Synth, mono, then mixed into every channel.
     if ((int) synthBuffer.size() < numSamples)
         return;   // prepare() wasn't called with a big enough block; stay silent rather than allocate
 
     std::fill (synthBuffer.begin(), synthBuffer.begin() + numSamples, 0.0f);
+    const float fadeStep = 1.0f / (float) fadeLength;
 
     for (auto& voice : voices)
     {
         if (! voice.active)
             continue;
 
-        const int from = juce::jlimit (0, numSamples, (int) std::ceil (voice.startSample - blockStartSample));
+        // A fading voice belongs to the old timeline: it plays from the top
+        // of the block and only ramps down.
+        const int from = voice.fading ? 0 : juce::jlimit (0, numSamples, (int) std::ceil (voice.startSample - blockStartSample));
         const bool silenced = ! isAudible (voice.layer);
 
         for (int i = from; i < numSamples; ++i)
         {
-            const double sampleIndex = blockStartSample + i;
-            if (! voice.released && (silenced || sampleIndex >= voice.releaseSample))
-                voice.released = true;
+            if (! voice.fading)
+            {
+                const double sampleIndex = blockStartSample + i;
+                if (! voice.released && (silenced || sampleIndex >= voice.releaseSample))
+                    voice.released = true;
+            }
 
-            synthBuffer[(size_t) i] += kSynthLevel * renderVoice (voice, sampleRate);
+            float sample = kSynthLevel * renderVoice (voice, sampleRate);
+
+            if (voice.fading)
+            {
+                sample *= voice.fadeGain;
+                voice.fadeGain -= fadeStep;
+                if (voice.fadeGain <= 0.0f)
+                    voice.active = false;
+            }
+
+            synthBuffer[(size_t) i] += sample;
             if (! voice.active)
                 break;
         }
     }
 
-    // Original audio, linearly interpolated from the file's rate.
+    // Original audio, linearly interpolated from the file's rate: the new
+    // position (fading in after a start or jump), plus the old position
+    // fading out after a jump.
     const float m = mix.load();
     const float audioGain = std::cos (m * (float) kPi * 0.5f) * snapshot.sourceGain;
     const float synthGain = std::sin (m * (float) kPi * 0.5f);
+
+    const int fadeInAtStart = fadeInRemaining, fadeOutAtStart = fadeOutRemaining;
 
     for (int ch = 0; ch < numChannels; ++ch)
     {
@@ -380,15 +452,37 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
             const float* in = src.getReadPointer (srcChannel);
             const int srcLength = src.getNumSamples();
             const double ratio = snapshot.source->sampleRate / sampleRate;
-            double readPos = startSeconds * snapshot.source->sampleRate;
 
-            for (int i = 0; i < numSamples; ++i, readPos += ratio)
+            const auto readAt = [&] (double pos) -> float
             {
-                const int index = (int) readPos;
-                if (index + 1 >= srcLength)
-                    break;
-                const float frac = (float) (readPos - index);
-                out[i] += audioGain * (in[index] + (in[index + 1] - in[index]) * frac);
+                const int index = (int) pos;
+                if (index < 0 || index + 1 >= srcLength)
+                    return 0.0f;
+                const float frac = (float) (pos - index);
+                return in[index] + (in[index + 1] - in[index]) * frac;
+            };
+
+            if (isPlaying)
+            {
+                double readPos = startSeconds * snapshot.source->sampleRate;
+                int fadeIn = fadeInAtStart;
+                for (int i = 0; i < numSamples; ++i, readPos += ratio)
+                {
+                    float gain = audioGain;
+                    if (fadeIn > 0)
+                    {
+                        gain *= 1.0f - (float) fadeIn * fadeStep;
+                        --fadeIn;
+                    }
+                    out[i] += gain * readAt (readPos);
+                }
+            }
+
+            if (fadeOutAtStart > 0)
+            {
+                double readPos = fadeOutFromSeconds * snapshot.source->sampleRate;
+                for (int i = 0, left = fadeOutAtStart; i < numSamples && left > 0; ++i, --left, readPos += ratio)
+                    out[i] += audioGain * (float) left * fadeStep * readAt (readPos);
             }
         }
 
@@ -400,12 +494,28 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
             out[i] = softLimit (out[i]);
     }
 
+    // Advance the declick state once for all channels.
+    if (fadeOutRemaining > 0)
+    {
+        const int used = juce::jmin (fadeOutRemaining, numSamples);
+        fadeOutRemaining -= used;
+        fadeOutFromSeconds += used / sampleRate;
+    }
+    if (isPlaying)
+        fadeInRemaining = juce::jmax (0, fadeInRemaining - numSamples);
+
+    wasPlaying = isPlaying;
+
+    if (! isPlaying)
+        return;
+
     positionSeconds.store (endSeconds);
+    lastEndSeconds = endSeconds;
 
     if (endSeconds >= snapshot.lengthSeconds + kTailSeconds)
     {
         playing.store (false);
-        positionSeconds.store (0.0);
+        positionSeconds.store (playStartSeconds.load());   // back to where this play began
         ++seekGeneration;
     }
 }
