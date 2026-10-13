@@ -57,6 +57,10 @@ Canvas::Canvas()
 {
     actionChip.onClick = [this] { if (onAction) onAction(); };
     addChildComponent (actionChip);
+
+    strip.onMute = [this] (int layer) { if (onMuteToggled) onMuteToggled (layer); showStripFor (layer); };
+    strip.onSolo = [this] (int layer) { if (onSoloToggled) onSoloToggled (layer); showStripFor (layer); };
+    addChildComponent (strip);
 }
 
 void Canvas::setGridDivisions (int divisions)
@@ -195,6 +199,7 @@ void Canvas::setNotes (int newRunId, int version, const std::vector<atm::MidiNot
 
 void Canvas::clearLayers()
 {
+    hideStrip();
     for (auto& layer : layers)
         removeChildComponent (layer.chip.get());
 
@@ -257,6 +262,8 @@ Canvas::Layer& Canvas::ensureLayer (int key)
         chip.onHoverChanged = [this, key] (bool hovering)
         {
             chipHover = hovering ? key : (chipHover == key ? -1 : chipHover);
+            if (hovering)
+                showStripFor (key);
             refreshLayerStates();
             repaint();
         };
@@ -268,8 +275,6 @@ Canvas::Layer& Canvas::ensureLayer (int key)
             repaint();
         };
         chip.onContextMenu = [this, key] { showLayerMenu (key); };
-        chip.onMuteToggled = [this, key] { if (onMuteToggled) onMuteToggled (key); };
-        chip.onSoloToggled = [this, key] { if (onSoloToggled) onSoloToggled (key); };
         chip.makeDragFile = [this, key] { return makeLayerMidiFile ? makeLayerMidiFile (key) : juce::File(); };
 
         addAndMakeVisible (chip);
@@ -306,8 +311,7 @@ void Canvas::refreshLayerStates()
     {
         layer.chip->setLit (layer.key == lit);
         layer.chip->setSelected (layer.key == selectedLayer);
-        layer.chip->setMuted (isLayerMuted ? isLayerMuted (layer.key) : false);
-        layer.chip->setSoloed (isLayerSoloed ? isLayerSoloed (layer.key) : false);
+        layer.chip->setMuted (isLayerAudible ? ! isLayerAudible (layer.key) : false);
     }
 }
 
@@ -762,6 +766,25 @@ void Canvas::paintNotes (juce::Graphics& g) const
 
 void Canvas::paintHoverInfo (juce::Graphics& g) const
 {
+    // Engaged mute / solo, as a dim word under each chip whose strip isn't
+    // showing -- the state stays visible without the glyphs.
+    g.setFont (LnF::uiFont (10.0f));
+    for (const auto& layer : layers)
+    {
+        if (strip.isVisible() && strip.getLayer() == layer.key)
+            continue;
+
+        const bool muted  = isLayerMuted  && isLayerMuted (layer.key);
+        const bool soloed = isLayerSoloed && isLayerSoloed (layer.key);
+        if (! muted && ! soloed)
+            continue;
+
+        const auto chip = layer.chip->getBounds();
+        g.setColour (LnF::ink().withAlpha (kAlphaSecondary));
+        g.drawText (muted ? "muted" : "solo", chip.withY (chip.getBottom() + 1).withHeight (13),
+                    juce::Justification::centred, false);
+    }
+
     const int lit = litLayer();
     const auto* layer = [&]() -> const Layer*
     {
@@ -936,4 +959,126 @@ void Canvas::mouseUp (const juce::MouseEvent& e)
         refreshLayerStates();
         repaint();
     }
+}
+
+//==============================================================================
+// The mute / solo strip.
+
+void Canvas::showStripFor (int layer)
+{
+    const auto* found = findLayer (layer);
+    if (found == nullptr)
+        return;
+
+    const auto chip = found->chip->getBounds();
+    const int width = LayerStrip::kWidth;
+    const int x = juce::jlimit (0, juce::jmax (0, getWidth() - width), chip.getCentreX() - width / 2);
+
+    // The bounds start at the chip's bottom edge, so the gap is part of it.
+    strip.setBounds (x, chip.getBottom(), width, LayerStrip::kGap + LayerStrip::kHeight);
+    strip.surface = LnF::surfaceAt (LnF::background(), (float) (chip.getBottom() + LayerStrip::kHeight) / (float) juce::jmax (1, getHeight()));
+    strip.showFor (layer, isLayerMuted && isLayerMuted (layer), isLayerSoloed && isLayerSoloed (layer));
+    strip.toFront (false);
+    startTimerHz (20);
+    refreshLayerStates();
+    repaint();
+}
+
+void Canvas::hideStrip()
+{
+    stopTimer();
+    if (strip.isVisible())
+    {
+        strip.setVisible (false);
+        repaint();
+    }
+}
+
+void Canvas::timerCallback()
+{
+    // Polled rather than tracked through enter/exit pairs: the strip stays
+    // while the pointer is on it or on its chip, and goes once it's on
+    // neither.
+    if (! strip.isVisible())
+    {
+        stopTimer();
+        return;
+    }
+
+    const auto* layer = findLayer (strip.getLayer());
+    const auto mouse = getMouseXYRelative();
+    const bool overChip  = layer != nullptr && layer->chip->getBounds().contains (mouse);
+    const bool overStrip = strip.getBounds().contains (mouse);
+
+    if (! overChip && ! overStrip)
+        hideStrip();
+}
+
+Canvas::LayerStrip::LayerStrip()
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void Canvas::LayerStrip::showFor (int newLayer, bool isMuted, bool isSoloed)
+{
+    layer = newLayer;
+    muted = isMuted;
+    soloed = isSoloed;
+    setVisible (true);
+    repaint();
+}
+
+juce::Rectangle<float> Canvas::LayerStrip::stadium() const
+{
+    return getLocalBounds().withTrimmedTop (kGap).toFloat().reduced (0.5f);
+}
+
+juce::Rectangle<float> Canvas::LayerStrip::wordBounds (int index) const
+{
+    auto r = stadium().reduced (4.0f, 3.0f);
+    const float w = r.getWidth() * 0.5f;
+    return index == 0 ? r.removeFromLeft (w).reduced (1.0f, 0.0f) : r.removeFromRight (w).reduced (1.0f, 0.0f);
+}
+
+void Canvas::LayerStrip::paint (juce::Graphics& g)
+{
+    const auto r = stadium();
+    g.setColour (surface);
+    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+    g.setColour (LnF::ink().withAlpha (kAlphaHairline));
+    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+
+    // Two worded toggles: engaged = ink fill, ground text; resting = ink
+    // text at the resting-interactive alpha, full on hover.
+    const auto mouse = getMouseXYRelative().toFloat();
+    g.setFont (LnF::uiFont (11.0f));
+
+    for (int i = 0; i < 2; ++i)
+    {
+        const auto word = wordBounds (i);
+        const bool engaged = i == 0 ? muted : soloed;
+        const bool hovered = isMouseOver() && word.contains (mouse);
+
+        if (engaged)
+        {
+            g.setColour (LnF::ink());
+            g.fillRoundedRectangle (word, word.getHeight() * 0.5f);
+        }
+
+        g.setColour (engaged ? LnF::background() : LnF::ink().withAlpha (hovered ? 1.0f : kAlphaResting));
+        g.drawText (i == 0 ? "mute" : "solo", word, juce::Justification::centred, false);
+    }
+}
+
+void Canvas::LayerStrip::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu() || layer < 0)
+        return;
+
+    for (int i = 0; i < 2; ++i)
+        if (wordBounds (i).contains (e.position))
+        {
+            if (i == 0 && onMute) onMute (layer);
+            if (i == 1 && onSolo) onSolo (layer);
+        }
 }

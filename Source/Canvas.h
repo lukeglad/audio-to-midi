@@ -28,7 +28,8 @@
     A view of state the editor pushes in. It owns only view state: the
     layers built from the notes, selection and hover, and the pitch range.
 */
-class Canvas : public juce::Component
+class Canvas : public juce::Component,
+               private juce::Timer
 {
 public:
     /** What to say in the waveform band while nothing else claims it (a load
@@ -96,6 +97,42 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
+    //==========================================================================
+    /**
+        The mute / solo strip that drops under a hovered layer chip (the EQ
+        band hover-strip pattern): a 22 px stadium with two worded toggles,
+        filled with ink when engaged. Its bounds reach up to the chip, so the
+        pointer never crosses a gap moving from one to the other.
+    */
+    struct LayerStrip : juce::Component
+    {
+        LayerStrip();
+
+        void showFor (int layer, bool muted, bool soloed);
+        int getLayer() const noexcept { return layer; }
+
+        static constexpr int kWidth = 112, kHeight = 22, kGap = 4;
+
+        std::function<void (int layer)> onMute, onSolo;
+        juce::Colour surface;
+
+        void paint (juce::Graphics&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseMove (const juce::MouseEvent&) override { repaint(); }
+        void mouseExit (const juce::MouseEvent&) override { repaint(); }
+
+    private:
+        juce::Rectangle<float> stadium() const;
+        juce::Rectangle<float> wordBounds (int index) const;
+
+        int layer = -1;
+        bool muted = false, soloed = false;
+    };
+
+    void timerCallback() override;
+    void showStripFor (int layer);
+    void hideStrip();
+
     struct Layer
     {
         int key = 0;
@@ -151,6 +188,7 @@ private:
     int runId = -1;
     int notesVersion = -1;
     std::vector<atm::MidiNote> notes;
+    LayerStrip strip;
     std::vector<Layer> layers;                // ordered by key: GM family order, drums last
     int pitchLow = 48, pitchHigh = 72;        // [low, high), whole octaves; grows only
     bool hasPitchRange = false;
