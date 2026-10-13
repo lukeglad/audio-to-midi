@@ -1,5 +1,6 @@
 #include "LayerChip.h"
 #include "AudioFlowerLookAndFeel.h"
+#include "Glass.h"
 
 using LnF = AudioFlowerLookAndFeel;
 
@@ -46,14 +47,20 @@ void LayerChip::paint (juce::Graphics& g)
     const auto r = getLocalBounds().toFloat().reduced (0.5f);
     const float radius = r.getHeight() * 0.5f;
 
-    // Lit: the house hot-chip treatment (ink fill, ground text). Otherwise a
-    // surface-shaded stadium, so notes passing under it don't show through,
-    // with copper hairline + text when selected (copper = the selected layer).
-    g.setColour (lit ? LnF::ink() : surface);
-    g.fillRoundedRectangle (r, radius);
-
-    if (! lit)
+    // Lit: the house hot-chip treatment (solid ink fill, ground text), so
+    // the state never depends on reading through glass. Otherwise liquid
+    // glass, with a copper rim + text when selected (copper = the selected
+    // layer).
+    if (lit)
     {
+        g.setColour (LnF::ink());
+        g.fillRoundedRectangle (r, radius);
+    }
+    else if (! Glass::paint (g, *this, getLocalBounds().toFloat(), surface,
+                             selected ? std::optional (LnF::accent()) : std::nullopt))
+    {
+        g.setColour (surface);
+        g.fillRoundedRectangle (r, radius);
         g.setColour (selected ? LnF::accent() : LnF::ink().withAlpha (0.45f));
         g.drawRoundedRectangle (r, radius, 1.0f);
     }

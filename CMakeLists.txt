@@ -89,6 +89,7 @@ target_sources (AudioToMidi PRIVATE
     Source/Canvas.cpp
     Source/Chip.cpp
     Source/DragValue.cpp
+    Source/Glass.cpp
     Source/LayerChip.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp

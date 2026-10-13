@@ -1,5 +1,6 @@
 #include "Chip.h"
 #include "AudioFlowerLookAndFeel.h"
+#include "Glass.h"
 
 using LnF = AudioFlowerLookAndFeel;
 
@@ -41,8 +42,13 @@ void Chip::paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown)
     }
     else
     {
-        g.setColour (LnF::ink().withAlpha (0.45f));
-        g.drawRoundedRectangle (r, radius, 1.0f);
+        // Glass where there's something to float over (the canvas); a plain
+        // hairline elsewhere.
+        if (! Glass::paint (g, *this, getLocalBounds().toFloat(), LnF::background()))
+        {
+            g.setColour (LnF::ink().withAlpha (0.45f));
+            g.drawRoundedRectangle (r, radius, 1.0f);
+        }
         g.setColour (LnF::ink());
     }
 

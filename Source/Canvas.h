@@ -7,6 +7,7 @@
 #include "Engine/Tempo.h"
 
 #include "Chip.h"
+#include "Glass.h"
 #include "LayerChip.h"
 #include "PlayButton.h"
 #include "QuantizeControl.h"
@@ -31,6 +32,7 @@
     layers built from the notes, selection and hover, and the pitch range.
 */
 class Canvas : public juce::Component,
+               public GlassBackdrop,
                private juce::Timer
 {
 public:
@@ -102,6 +104,10 @@ public:
     std::function<void (int layerKey)> onSaveLayer;
 
     void paint (juce::Graphics&) override;
+
+    /** What the canvas draws, without its children: the glass surfaces
+        floating on it read from this. Rebuilt lazily after each repaint. */
+    const juce::Image& getGlassBackdrop() override;
     void resized() override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
@@ -167,6 +173,7 @@ private:
     float rowHeight() const;
     juce::Rectangle<float> noteBounds (const atm::MidiNote&) const;
 
+    void paintScene (juce::Graphics&);
     void paintWaveform (juce::Graphics&) const;
     void paintRuler (juce::Graphics&) const;
     void paintRoll (juce::Graphics&) const;
@@ -202,6 +209,9 @@ private:
     Chip actionChip;
 
     int runId = -1;
+    juce::Image backdrop;
+    bool backdropDirty = true;
+
     int notesVersion = -1;
     std::vector<atm::MidiNote> notes;
     LayerStrip strip;

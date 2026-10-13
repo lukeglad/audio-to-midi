@@ -1,5 +1,6 @@
 #include "QuantizeControl.h"
 #include "AudioFlowerLookAndFeel.h"
+#include "Glass.h"
 
 using LnF = AudioFlowerLookAndFeel;
 
@@ -92,12 +93,14 @@ juce::Rectangle<int> QuantizeLabel::gridBounds() const
 
 void QuantizeLabel::paint (juce::Graphics& g)
 {
-    // A faint plate in the surface shade at its own height: enough to keep
-    // the text readable over passing notes, quiet enough not to read as a
-    // pill (no hairline -- the floating pill this replaces looked bad).
+    // Liquid glass, like every floating surface; the faint flat plate is
+    // the fallback when there's nothing to read through.
     const auto r = getLocalBounds().toFloat();
-    g.setColour (surface.withAlpha (0.88f));
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+    if (! Glass::paint (g, *this, r, surface))
+    {
+        g.setColour (surface.withAlpha (0.88f));
+        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+    }
 
     g.setFont (LnF::uiFont (kTextSize));
     g.setColour (LnF::ink().withAlpha (0.45f));
@@ -185,12 +188,16 @@ juce::Rectangle<float> QuantizeFader::track() const
 void QuantizeFader::paint (juce::Graphics& g)
 {
     const auto b = body();
-    g.setColour (surface);
-    g.fillRoundedRectangle (b, b.getWidth() * 0.5f);
-    g.setColour (LnF::ink().withAlpha (0.40f));
-    g.drawRoundedRectangle (b, b.getWidth() * 0.5f, 1.0f);
+    if (! Glass::paint (g, *this, b, surface))
+    {
+        g.setColour (surface);
+        g.fillRoundedRectangle (b, b.getWidth() * 0.5f);
+        g.setColour (LnF::ink().withAlpha (0.40f));
+        g.drawRoundedRectangle (b, b.getWidth() * 0.5f, 1.0f);
+    }
 
     const auto t = track();
+    g.setColour (LnF::ink().withAlpha (0.40f));
     g.drawRoundedRectangle (t, t.getWidth() * 0.5f, 1.0f);
 
     // Filled from the bottom, like a level.

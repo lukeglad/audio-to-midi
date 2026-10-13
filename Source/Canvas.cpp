@@ -507,6 +507,29 @@ void Canvas::layoutActionChip()
 //==============================================================================
 void Canvas::paint (juce::Graphics& g)
 {
+    // The children painted after this read the backdrop; it no longer
+    // matches what's on screen, so it's rebuilt on their first request.
+    backdropDirty = true;
+    paintScene (g);
+}
+
+const juce::Image& Canvas::getGlassBackdrop()
+{
+    if (backdropDirty || backdrop.getWidth() != getWidth() || backdrop.getHeight() != getHeight())
+    {
+        if (getWidth() > 0 && getHeight() > 0)
+        {
+            backdrop = juce::Image (juce::Image::ARGB, getWidth(), getHeight(), false);
+            juce::Graphics bg (backdrop);
+            paintScene (bg);
+        }
+        backdropDirty = false;
+    }
+    return backdrop;
+}
+
+void Canvas::paintScene (juce::Graphics& g)
+{
     const auto bounds = getLocalBounds().toFloat();
 
     // One lit surface under both sections (see LnF::surfaceAt).
@@ -1145,10 +1168,13 @@ juce::Rectangle<float> Canvas::LayerStrip::wordBounds (int index) const
 void Canvas::LayerStrip::paint (juce::Graphics& g)
 {
     const auto r = stadium();
-    g.setColour (surface);
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-    g.setColour (LnF::ink().withAlpha (kAlphaHairline));
-    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+    if (! Glass::paint (g, *this, r, surface))
+    {
+        g.setColour (surface);
+        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        g.setColour (LnF::ink().withAlpha (kAlphaHairline));
+        g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+    }
 
     // Two worded toggles: engaged = ink fill, ground text; resting = ink
     // text at the resting-interactive alpha, full on hover.
