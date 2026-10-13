@@ -18,6 +18,7 @@
 
 #include "Engine/Cleanup.h"
 #include "Engine/MidiExport.h"
+#include "Engine/ModelDownloader.h"
 #include "Engine/ModelFiles.h"
 #include "Engine/Preview.h"
 #include "Engine/Resampler.h"
@@ -43,6 +44,7 @@ namespace
         print ("       atm-cli --velocity-check     (synthetic tones at known levels, no model needed)");
         print ("       atm-cli --state-check FILE   (what the project would store for FILE, and a round trip)");
         print ("       atm-cli --scrub-check FILE   (seek every 50 ms while playing: no clicks at the jumps)");
+        print ("       atm-cli --download-check     (downloads the small model twice into a scratch folder)");
         return 2;
     }
 
@@ -373,6 +375,133 @@ namespace
     }
 }
 
+namespace
+{
+    using Downloader = atm::ModelDownloader;
+
+    /** Polls until the download is no longer busy; false on timeout. */
+    bool waitForDownload (Downloader& downloader, atm::ModelSize size, int timeoutSeconds,
+                          const std::function<void (const Downloader::Status&)>& onPoll = {})
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutSeconds * 1000;
+
+        while (juce::Time::getMillisecondCounter() < deadline)
+        {
+            const auto status = downloader.status (size);
+            if (onPoll) onPoll (status);
+            if (! status.isBusy())
+                return true;
+            juce::Thread::sleep (100);
+        }
+
+        return false;
+    }
+
+    /** The other process in the waiting test: downloads small into `directory`. */
+    int downloadChild (const juce::File& directory)
+    {
+        atm::overrideModelsDirectory (directory);
+        Downloader downloader;
+        downloader.start (atm::ModelSize::small);
+        waitForDownload (downloader, atm::ModelSize::small, 600);
+        return atm::isModelInstalled (atm::ModelSize::small) ? 0 : 1;
+    }
+
+    /** The downloader's failure handling, against the real server, in a
+        scratch folder: a folder it can't write to, another process already
+        downloading, and a copy that fails its digest. */
+    int downloadCheck()
+    {
+        constexpr auto size = atm::ModelSize::small;
+        const auto directory = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("atm-download-check");
+        directory.deleteRecursively();
+        directory.createDirectory();
+        atm::overrideModelsDirectory (directory);
+        const juce::ScopeGuard cleanUp { [&] { directory.setReadOnly (false, true); directory.deleteRecursively(); } };
+
+        bool ok = true;
+        const auto report = [&] (const juce::String& name, bool passed, const juce::String& detail)
+        {
+            print (name.paddedRight (' ', 14) + detail + ": " + (passed ? "ok" : "WRONG"));
+            ok = ok && passed;
+        };
+
+        // 1. A folder it can't write to: a save failure, not a disk-space one.
+        {
+            directory.setReadOnly (true);
+            Downloader downloader;
+            downloader.start (size);
+            const bool finished = waitForDownload (downloader, size, 60);
+            const auto status = downloader.status (size);
+            directory.setReadOnly (false);
+            report ("can't save", finished && status.phase == Downloader::Phase::failed
+                                      && status.failure == Downloader::Failure::cantSave,
+                    "failed as " + juce::String ((int) status.failure) + " (" + status.detail + ")");
+        }
+
+        // 2. Another process is downloading: wait on it, following its part file.
+        {
+            juce::ChildProcess child;
+            const auto self = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getFullPathName();
+            child.start (juce::StringArray { self, "--download-child", directory.getFullPathName() }, 0);
+
+            const auto part = atm::modelPartFile (size);
+            for (int i = 0; i < 300 && part.getSize() < (1 << 20); ++i)
+                juce::Thread::sleep (100);
+
+            Downloader downloader;
+            downloader.start (size);
+
+            bool sawWaiting = false, sawDownloading = false;
+            juce::int64 firstSeen = -1, lastSeen = -1;
+            const bool finished = waitForDownload (downloader, size, 600, [&] (const Downloader::Status& s)
+            {
+                if (s.phase == Downloader::Phase::waiting)
+                {
+                    sawWaiting = true;
+                    if (firstSeen < 0) firstSeen = s.downloadedBytes;
+                    lastSeen = s.downloadedBytes;
+                }
+                // Past the first poll: begin() reports downloading until the thread finds the lock taken.
+                if (s.phase == Downloader::Phase::downloading && sawWaiting)
+                    sawDownloading = true;
+            });
+            child.waitForProcessToFinish (600000);
+
+            report ("other process", finished && sawWaiting && ! sawDownloading && lastSeen > firstSeen
+                                         && atm::isModelInstalled (size) && child.getExitCode() == 0,
+                    juce::String::formatted ("waited, following %.0f -> %.0f MB, then installed",
+                                             (double) firstSeen / 1e6, (double) lastSeen / 1e6));
+        }
+
+        // 3. A copy that fails its digest is fetched again by itself.
+        {
+            atm::modelFile (size).deleteFile();
+            const auto part = atm::modelPartFile (size);
+            {
+                juce::FileOutputStream garbage (part);
+                juce::HeapBlock<char> zeros (1 << 20, true);
+                for (juce::int64 left = atm::modelInfo (size).numBytes; left > 0; left -= (1 << 20))
+                    garbage.write (zeros.get(), (size_t) juce::jmin<juce::int64> (left, 1 << 20));
+            }
+
+            Downloader downloader;
+            downloader.start (size);
+            bool sawSecondCopy = false;
+            const bool finished = waitForDownload (downloader, size, 600, [&] (const Downloader::Status& s)
+            {
+                sawSecondCopy = sawSecondCopy || (s.secondCopy && s.phase == Downloader::Phase::downloading);
+            });
+
+            report ("damaged copy", finished && sawSecondCopy && atm::isModelInstalled (size)
+                                        && downloader.status (size).phase == Downloader::Phase::idle,
+                    "downloaded again, then installed");
+        }
+
+        return ok ? 0 : 1;
+    }
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // message manager, for the service's WeakReferences
@@ -385,6 +514,10 @@ int main (int argc, char* argv[])
         return velocityCheck();
     if (argc == 3 && juce::String (argv[1]) == "--scrub-check")
         return scrubCheck (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
+    if (argc == 2 && juce::String (argv[1]) == "--download-check")
+        return downloadCheck();
+    if (argc == 3 && juce::String (argv[1]) == "--download-child")
+        return downloadChild (juce::File (argv[2]));
     if (argc == 3 && juce::String (argv[1]) == "--state-check")
         return stateCheck (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
 
@@ -481,11 +614,12 @@ int main (int argc, char* argv[])
     {
         notes.insert (notes.end(), newNotes.begin(), newNotes.end());
     };
-    job->onFinished = [&] (atm::Outcome o, juce::String e, juce::String d)
+    job->onLoaded = [&] (juce::String d) { device = d; };
+    job->onFinished = [&] (atm::Outcome o, atm::Failure, juce::String detail)
     {
         phaseMs[lastPhase] += juce::Time::getMillisecondCounterHiRes() - phaseStart;
         const std::lock_guard<std::mutex> lock (doneMutex);
-        outcome = o; error = e; device = d; done = true;
+        outcome = o; error = detail; done = true;
         doneCv.notify_all();
     };
 

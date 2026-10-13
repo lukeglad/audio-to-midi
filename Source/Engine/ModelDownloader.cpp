@@ -14,6 +14,9 @@ namespace
     // Delays before the attempts that follow a failed one. Reset whenever an
     // attempt writes something, so a long download survives a few drops.
     constexpr std::array<int, 3> kRetryDelaysMs { 2000, 5000, 10000 };
+
+    // How often a download waiting on another process looks at its part file.
+    constexpr int kWaitPollMs = 500;
 }
 
 //==============================================================================
@@ -61,32 +64,37 @@ public:
         s.phase = phase.load();
         s.totalBytes = modelInfo (size).numBytes;
         s.downloadedBytes = s.isBusy() ? downloadedBytes.load() : modelPartFile (size).getSize();
+        s.secondCopy = secondCopy.load();
 
         if (s.phase == Phase::failed)
         {
             const juce::ScopedLock lock (errorLock);
-            s.error = errorMessage;
+            s.failure = failure;
+            s.detail = detail;
         }
 
         return s;
     }
 
 private:
-    struct Attempt
+    struct Result
     {
-        juce::String failure;   // empty: the part file is complete
+        Failure failure = Failure::none;   // none: the part file is complete (or cancelled)
+        juce::String detail;               // for the log
         bool canRetry = true;
     };
 
     void run() override
     {
-        const auto failure = download();
+        secondCopy = false;
+        const auto result = download();
 
-        if (failure.isNotEmpty() && ! threadShouldExit())
+        if (result.failure != Failure::none && ! threadShouldExit())
         {
-            juce::Logger::writeToLog ("model download: " + juce::String (modelInfo (size).name) + ": " + failure);
+            juce::Logger::writeToLog ("model download: " + juce::String (modelInfo (size).name) + ": " + result.detail);
             const juce::ScopedLock lock (errorLock);
-            errorMessage = failure;
+            failure = result.failure;
+            detail = result.detail;
             phase = Phase::failed;
         }
         else
@@ -101,46 +109,111 @@ private:
         });
     }
 
-    /** @return Why it failed, or empty once installed or cancelled. */
-    juce::String download()
+    /** @return Why it failed; none once installed or cancelled. */
+    Result download()
     {
         const auto& info = modelInfo (size);
 
         if (isModelInstalled (size))
             return {};
 
+        const auto part = modelPartFile (size);
+
+        // Another process is downloading this size: follow its part file
+        // until it lets go, which it does once the model is in place (or
+        // when it gives up, and then this one carries on from its bytes).
         juce::InterProcessLock processLock ("AudioFlowerModelDownload_" + juce::String (info.name));
         if (! processLock.enter (0))
-            return "another plugin is already downloading this model";
+        {
+            phase = Phase::waiting;
+            owner.sendChangeMessage();   // async, and safe from any thread
+
+            while (! processLock.enter (0))
+            {
+                downloadedBytes = part.getSize();
+                wait (kWaitPollMs);
+
+                if (threadShouldExit())
+                    return {};
+            }
+
+            if (isModelInstalled (size))
+                return {};
+
+            phase = Phase::downloading;
+            owner.sendChangeMessage();   // async, and safe from any thread
+        }
 
         const auto directory = modelsDirectory();
         if (! directory.createDirectory())
-            return "couldn't create " + directory.getFullPathName();
+            return writeFailure (directory, info.numBytes);
 
-        const auto part = modelPartFile (size);
         deleteOtherPartFiles (part);
 
+        // A copy that fails its digest is fetched again once, by itself;
+        // twice in a row means something is wrong that another try won't fix.
+        for (int copy = 0;; ++copy)
+        {
+            if (const auto fetched = fetch (part, info); fetched.failure != Failure::none || threadShouldExit())
+                return fetched;
+
+            phase = Phase::verifying;
+
+            const auto digest = juce::SHA256 (part).toHexString();
+
+            if (threadShouldExit())
+                return {};
+
+            if (digest == info.sha256)
+                break;
+
+            part.deleteFile();
+
+            if (copy == 1)
+                return { Failure::corrupted, "the download failed its digest twice" };
+
+            juce::Logger::writeToLog ("model download: " + juce::String (info.name) + ": digest mismatch, downloading again");
+            secondCopy = true;
+            downloadedBytes = 0;
+            phase = Phase::downloading;
+            owner.sendChangeMessage();   // async, and safe from any thread
+        }
+
+        // Replaces a checkpoint of the wrong size, i.e. a file from another release.
+        if (! part.moveFileTo (modelFile (size)))
+            return { Failure::cantSave, "couldn't move the model into " + directory.getFullPathName() };
+
+        juce::Logger::writeToLog ("model download: " + juce::String (info.name) + " installed");
+        return {};
+    }
+
+    /** Until the part file is whole, with a few spaced retries. */
+    Result fetch (const juce::File& part, const ModelInfo& info)
+    {
         size_t failedAttempts = 0;
 
         while (part.getSize() != info.numBytes)
         {
+            if (part.getParentDirectory().getBytesFreeOnVolume() < info.numBytes - part.getSize())
+                return { Failure::noSpace, "not enough free space for " + juce::String (info.name) };
+
             const auto sizeBefore = part.getSize();
             const auto attempt = this->attempt (part, info);
 
             if (threadShouldExit())
                 return {};
 
-            if (attempt.failure.isEmpty())
+            if (attempt.failure == Failure::none)
                 continue;
 
             if (! attempt.canRetry)
-                return attempt.failure;
+                return attempt;
 
             if (part.getSize() > sizeBefore)
                 failedAttempts = 0;
 
             if (failedAttempts == kRetryDelaysMs.size())
-                return attempt.failure;
+                return attempt;
 
             wait (kRetryDelaysMs[failedAttempts++]);
 
@@ -148,29 +221,11 @@ private:
                 return {};
         }
 
-        phase = Phase::verifying;
-
-        const auto digest = juce::SHA256 (part).toHexString();
-
-        if (threadShouldExit())
-            return {};
-
-        if (digest != info.sha256)
-        {
-            part.deleteFile();
-            return "the download was corrupted, try again";
-        }
-
-        // Replaces a checkpoint of the wrong size, i.e. a file from another release.
-        if (! part.moveFileTo (modelFile (size)))
-            return "couldn't move the model into " + directory.getFullPathName();
-
-        juce::Logger::writeToLog ("model download: " + juce::String (info.name) + " installed");
         return {};
     }
 
     /** One request, from wherever the part file ends. */
-    Attempt attempt (const juce::File& part, const ModelInfo& info)
+    Result attempt (const juce::File& part, const ModelInfo& info)
     {
         juce::int64 offset = part.getSize();
 
@@ -203,7 +258,7 @@ private:
             return {};
 
         if (! request.connect (nullptr))
-            return { "couldn't reach huggingface.co" };
+            return { Failure::connection, "couldn't reach huggingface.co" };
 
         const int status = request.getStatusCode();
         const auto contentRange = request.getResponseHeaders()["Content-Range"];
@@ -217,14 +272,14 @@ private:
             if (! rangeMatches)
             {
                 part.deleteFile();
-                return { "unexpected response from huggingface.co" };
+                return { Failure::server, "unexpected response from huggingface.co" };
             }
         }
         else if (status == 200)
         {
             // The whole file, whether or not a range was asked for.
             if (offset > 0 && ! part.deleteFile())
-                return { "couldn't write to " + part.getFullPathName(), false };
+                return writeFailure (part, info.numBytes);
 
             offset = 0;
             downloadedBytes = 0;
@@ -232,16 +287,16 @@ private:
         else if (status == 416)
         {
             part.deleteFile();
-            return { "the partial download couldn't be resumed" };
+            return { Failure::server, "the partial download couldn't be resumed" };
         }
         else
         {
-            return { "huggingface.co answered http " + juce::String (status), status >= 500 };
+            return { Failure::server, "huggingface.co answered http " + juce::String (status), status >= 500 };
         }
 
         juce::FileOutputStream output (part);
         if (output.failedToOpen())
-            return { "couldn't write to " + part.getFullPathName(), false };
+            return writeFailure (part, info.numBytes - offset);
 
         juce::HeapBlock<char> buffer (kChunkBytes);
 
@@ -252,23 +307,30 @@ private:
                 break;
 
             if (downloadedBytes.load() + numRead > info.numBytes)
-                return { "huggingface.co sent more than the expected size", false };
+                return { Failure::server, "huggingface.co sent more than the expected size", false };
 
             if (! output.write (buffer.get(), (size_t) numRead))
-                return { "couldn't write to " + part.getFullPathName(), false };
+                return writeFailure (part, info.numBytes - downloadedBytes.load());
 
             downloadedBytes += numRead;
         }
 
         output.flush();
         if (output.getStatus().failed())
-            return { "couldn't write to " + part.getFullPathName(), false };
+            return writeFailure (part, info.numBytes - downloadedBytes.load());
 
         // A connection that drops mid-body ends the stream early rather than reporting an error.
         if (downloadedBytes.load() != info.numBytes)
-            return { "the connection dropped" };
+            return { Failure::connection, "the connection dropped" };
 
         return {};
+    }
+
+    /** A write that failed: a full disk, or something else. Not retried. */
+    static Result writeFailure (const juce::File& file, juce::int64 bytesStillNeeded)
+    {
+        const bool full = file.getParentDirectory().getBytesFreeOnVolume() < bytesStillNeeded;
+        return { full ? Failure::noSpace : Failure::cantSave, "couldn't write to " + file.getFullPathName(), false };
     }
 
     /** A part named for another digest was started by a build pinned to other weights. */
@@ -287,8 +349,11 @@ private:
     std::atomic<Phase> phase { Phase::idle };
     std::atomic<juce::int64> downloadedBytes { 0 };
 
+    std::atomic<bool> secondCopy { false };
+
     juce::CriticalSection errorLock;
-    juce::String errorMessage;
+    Failure failure = Failure::none;
+    juce::String detail;
 
     // The request in flight, for requestStop to cancel from another thread.
     juce::CriticalSection streamLock;

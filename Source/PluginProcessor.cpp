@@ -380,6 +380,7 @@ void AudioToMidiProcessor::startTranscription()
     if (! atm::isModelInstalled (transcription.model))
     {
         transcription.phase = TranscriptionPhase::waitingForModel;
+        downloader->start (transcription.model);
         sendChangeMessage();
         return;
     }
@@ -418,12 +419,20 @@ void AudioToMidiProcessor::startTranscription()
                 self->onJobNotes (generation, newNotes, finalizedThrough);
         });
     };
-    job->onFinished = [weakThis, generation] (atm::Outcome outcome, juce::String error, juce::String device)
+    job->onLoaded = [weakThis, generation] (juce::String device)
     {
-        juce::MessageManager::callAsync ([weakThis, generation, outcome, error, device]
+        juce::MessageManager::callAsync ([weakThis, generation, device]
         {
             if (auto* self = weakThis.get())
-                self->onJobFinished (generation, outcome, error, device);
+                self->onJobLoaded (generation, device);
+        });
+    };
+    job->onFinished = [weakThis, generation] (atm::Outcome outcome, atm::Failure failure, juce::String)
+    {
+        juce::MessageManager::callAsync ([weakThis, generation, outcome, failure]
+        {
+            if (auto* self = weakThis.get())
+                self->onJobFinished (generation, outcome, failure);
         });
     };
 
@@ -500,6 +509,14 @@ void AudioToMidiProcessor::retry()
         case TranscriptionPhase::done:
             break;
     }
+}
+
+std::optional<atm::ModelSize> AudioToMidiProcessor::smallerModel (atm::ModelSize size)
+{
+    if (size == atm::kAllModelSizes.front())
+        return std::nullopt;
+
+    return (atm::ModelSize) ((int) size - 1);
 }
 
 void AudioToMidiProcessor::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -625,13 +642,45 @@ void AudioToMidiProcessor::onJobNotes (int generation, std::vector<msl::Note> ne
     notesChanged();
 }
 
-void AudioToMidiProcessor::onJobFinished (int generation, atm::Outcome outcome, juce::String error, juce::String device)
+void AudioToMidiProcessor::onJobLoaded (int generation, juce::String device)
+{
+    if (generation != jobGeneration)
+        return;
+
+    transcription.device = device;
+    sendChangeMessage();
+}
+
+void AudioToMidiProcessor::onJobFinished (int generation, atm::Outcome outcome, atm::Failure failure)
 {
     if (generation != jobGeneration)
         return;
 
     job.reset();
-    transcription.device = device;
+
+    // A model file that's damaged or from another release is replaced by
+    // itself, once a session, and the run carries on when it lands. One that
+    // went missing is simply downloaded again.
+    if (outcome == atm::Outcome::failed)
+    {
+        const auto size = transcription.model;
+
+        if (failure == atm::Failure::modelInvalid && ! replacedModels.contains (size))
+        {
+            replacedModels.insert (size);
+            atm::modelFile (size).deleteFile();
+            startTranscription();
+            transcription.updatingModel = true;
+            sendChangeMessage();
+            return;
+        }
+
+        if (failure == atm::Failure::modelMissing && ! atm::isModelInstalled (size))
+        {
+            startTranscription();
+            return;
+        }
+    }
 
     switch (outcome)
     {
@@ -648,7 +697,7 @@ void AudioToMidiProcessor::onJobFinished (int generation, atm::Outcome outcome, 
 
         case atm::Outcome::failed:
             transcription.phase = TranscriptionPhase::failed;
-            transcription.error = error;
+            transcription.failure = failure == atm::Failure::outOfMemory ? failure : atm::Failure::other;
             break;
     }
 

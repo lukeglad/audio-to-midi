@@ -54,10 +54,15 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     canvas.onSoloToggled = [this, &preview] (int layer) { preview.setSoloed (layer, ! preview.isSoloed (layer)); canvas.refreshPreviewState(); };
     canvas.onAction = [this]
     {
-        if (processorRef.getTranscription().isRunning())
+        const auto& t = processorRef.getTranscription();
+        const auto smaller = AudioToMidiProcessor::smallerModel (t.model);
+
+        if (t.isRunning())
             processorRef.cancelTranscription();
         else if (processorRef.getDownloader().busySize().has_value())
             processorRef.cancelDownload();
+        else if (t.phase == TranscriptionPhase::failed && t.failure == atm::Failure::outOfMemory && smaller.has_value())
+            processorRef.chooseModel (*smaller);
         else
             processorRef.retry();
     };
@@ -141,18 +146,18 @@ void AudioToMidiEditor::resized()
 }
 
 //==============================================================================
-bool AudioToMidiEditor::isInterestedInFileDrag (const juce::StringArray& files)
+// Every file drag is taken, so one that isn't audio can say so instead of
+// silently doing nothing; the drop itself ignores it.
+bool AudioToMidiEditor::isInterestedInFileDrag (const juce::StringArray&)
 {
-    for (const auto& path : files)
-        if (isSupportedAudioFile (juce::File (path)))
-            return true;
-
-    return false;
+    return true;
 }
 
-void AudioToMidiEditor::fileDragEnter (const juce::StringArray&, int, int)
+void AudioToMidiEditor::fileDragEnter (const juce::StringArray& files, int, int)
 {
-    canvas.setDragHover (true);
+    const bool anyAudio = std::any_of (files.begin(), files.end(),
+                                       [] (const juce::String& path) { return isSupportedAudioFile (juce::File (path)); });
+    canvas.setDragHover (true, anyAudio);
 }
 
 void AudioToMidiEditor::fileDragExit (const juce::StringArray&)
@@ -230,22 +235,58 @@ void AudioToMidiEditor::refreshFromProcessor()
         modelLabel = juce::String (atm::modelInfo (*busy).name) + kDot + percent (downloader.status (*busy).progress());
     topBar.setModelLabel (modelLabel);
 
-    // The status message. A download in progress shows whether or not audio
-    // is loaded; otherwise the transcription phase decides.
+    // The status message: what's happening in plain words, with at most one
+    // action (mockups/first-launch-errors.html). A download shows whether or
+    // not audio is waiting for it; otherwise the transcription phase decides.
     Canvas::Status status;
     double progressTime = -1.0;
+
+    using DPhase = atm::ModelDownloader::Phase;
+    const bool audioWaiting = source != nullptr && t.phase == TranscriptionPhase::waitingForModel;
 
     if (const auto busy = downloader.busySize())
     {
         const auto ds = downloader.status (*busy);
-        status.primary = (ds.phase == atm::ModelDownloader::Phase::verifying ? "checking " : "downloading ")
-                         + juce::String (atm::modelInfo (*busy).name) + " model" + kDot + percent (ds.progress());
-        status.action = ds.phase == atm::ModelDownloader::Phase::downloading ? "cancel" : "";
+        const auto& info = atm::modelInfo (*busy);
+        const bool forThisAudio = audioWaiting && *busy == t.model;
+        const auto modelPhrase = forThisAudio ? juce::String ("the model") : "the " + juce::String (info.name) + " model";
+
+        if (ds.phase == DPhase::verifying)
+        {
+            status.primary = forThisAudio ? "getting ready" : "checking " + modelPhrase;
+            status.secondary = forThisAudio ? "checking the download" : "";
+        }
+        else if (ds.phase == DPhase::waiting)
+        {
+            status.primary = (forThisAudio ? juce::String ("getting ready") : "downloading " + modelPhrase) + kDot + percent (ds.progress());
+            status.secondary = "another window is downloading " + modelPhrase;
+        }
+        else if (ds.secondCopy)
+        {
+            status.primary = "downloading " + modelPhrase + " again" + kDot + percent (ds.progress());
+            status.secondary = "the first copy didn't check out";
+            status.action = "cancel";
+        }
+        else if (forThisAudio && t.updatingModel)
+        {
+            status.primary = "updating the model" + kDot + percent (ds.progress());
+            status.secondary = juce::String (info.sizeLabel) + ", then it carries on";
+            status.action = "cancel";
+        }
+        else if (forThisAudio)
+        {
+            status.primary = "getting ready" + kDot + percent (ds.progress());
+            status.secondary = "downloading the model (" + juce::String (info.sizeLabel) + ", just this once)";
+            status.action = "cancel";
+        }
+        else
+        {
+            status.primary = "downloading " + modelPhrase + kDot + percent (ds.progress());
+            status.action = "cancel";
+        }
     }
     else
     {
-        const auto modelName = juce::String (atm::modelInfo (t.model).name);
-
         switch (t.phase)
         {
             case TranscriptionPhase::none:
@@ -254,15 +295,66 @@ void AudioToMidiEditor::refreshFromProcessor()
             case TranscriptionPhase::waitingForModel:
             {
                 const auto ds = downloader.status (t.model);
-                if (ds.phase == atm::ModelDownloader::Phase::failed)
+                const auto sizeLabel = juce::String (atm::modelInfo (t.model).sizeLabel);
+                using F = atm::ModelDownloader::Failure;
+
+                // What a download that stopped partway has kept.
+                const auto paused = [&]
                 {
-                    status.primary = "download failed" + kDot + ds.error;
-                    status.action = "retry";
+                    status.primary = "the download paused at " + percent (ds.progress());
+                    status.secondary = "it'll pick up where it left off";
+                    status.action = "resume";
+                };
+
+                if (ds.phase != DPhase::failed)
+                {
+                    // Cancelled by the user.
+                    if (ds.downloadedBytes > 0)
+                        paused();
+                    else
+                    {
+                        status.primary = "the model isn't downloaded yet";
+                        status.secondary = sizeLabel + ", just this once";
+                        status.action = "download";
+                    }
+                    break;
                 }
-                else
+
+                status.action = "try again";
+
+                switch (ds.failure)
                 {
-                    status.primary = "no model installed yet";
-                    status.secondary = "pick one at the top right to transcribe";
+                    case F::none:
+                    case F::connection:
+                    case F::server:
+                        if (ds.downloadedBytes > 0)
+                            paused();
+                        else if (ds.failure == F::server)
+                        {
+                            status.primary = "the download didn't start";
+                            status.secondary = "try again in a few minutes";
+                        }
+                        else
+                        {
+                            status.primary = "can't connect to download the model";
+                            status.secondary = "check your internet and try again";
+                        }
+                        break;
+
+                    case F::noSpace:
+                        status.primary = "not enough space for the model";
+                        status.secondary = "it needs " + sizeLabel + " free";
+                        break;
+
+                    case F::cantSave:
+                        status.primary = "the model couldn't be saved";
+                        status.secondary = "check your disk and try again";
+                        break;
+
+                    case F::corrupted:
+                        status.primary = "the download didn't check out";
+                        status.secondary = "try again in a few minutes";
+                        break;
                 }
                 break;
             }
@@ -274,7 +366,7 @@ void AudioToMidiEditor::refreshFromProcessor()
                 break;
 
             case TranscriptionPhase::loadingModel:
-                status.primary = "loading " + modelName + " model" + kEllipsis;
+                status.primary = "loading " + juce::String (atm::modelInfo (t.model).name) + " model" + kEllipsis;
                 status.action = "cancel";
                 break;
 
@@ -290,34 +382,48 @@ void AudioToMidiEditor::refreshFromProcessor()
                 const float shown = progressSmoother.update (juce::Time::getMillisecondCounterHiRes(),
                                                              t.progress, length, t.model);
                 status.primary = "transcribing" + kDot + percent (shown);
+                // Not a problem, just slower: a quiet note while it runs.
+                if (t.device == "cpu")
+                    status.secondary = "on the cpu, so it'll take a little longer";
                 status.action = "cancel";
                 progressTime = shown * length;
                 break;
             }
 
             case TranscriptionPhase::done:
-                // The layer chips say what was found. Only the cases that
-                // need explaining get a message.
+                // The layer chips say what was found. Only nothing needs explaining.
                 if (t.notes.empty())
                 {
                     status.primary = "no notes found";
-                    status.primaryAlpha = 0.45f;
-                }
-                else if (t.device == "cpu")
-                {
-                    status.primary = "ran on the cpu" + kDot + "gpu unavailable";
-                    status.primaryAlpha = 0.45f;
+                    status.secondary = "try a clearer or louder recording";
                 }
                 break;
 
             case TranscriptionPhase::cancelled:
-                status.primary = "transcription cancelled";
-                status.action = "retry";
+                status.primary = "transcription stopped";
+                status.action = "start again";
                 break;
 
             case TranscriptionPhase::failed:
-                status.primary = "transcription failed" + kDot + t.error;
-                status.action = "retry";
+                if (t.failure == atm::Failure::outOfMemory)
+                {
+                    if (const auto smaller = AudioToMidiProcessor::smallerModel (t.model))
+                    {
+                        status.primary = "not enough memory for the " + juce::String (atm::modelInfo (t.model).name) + " model";
+                        status.action = "use " + juce::String (atm::modelInfo (*smaller).name);
+                    }
+                    else
+                    {
+                        status.primary = "not enough memory to transcribe";
+                        status.secondary = "close some apps and try again";
+                        status.action = "try again";
+                    }
+                }
+                else
+                {
+                    status.primary = "something went wrong transcribing this";
+                    status.action = "try again";
+                }
                 break;
         }
     }

@@ -37,6 +37,10 @@ namespace atm
 
     /** ~/Library/Application Support/AudioFlower/models */
     juce::File modelsDirectory();
+
+    /** atm-cli's download check only: points modelsDirectory() at a scratch
+        folder, so the real models are never touched. Call before any download. */
+    void overrideModelsDirectory (const juce::File&);
     juce::File modelFile (ModelSize);
 
     /** Where an unfinished download accumulates. Named for the digest, so a

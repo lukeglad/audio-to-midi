@@ -11,6 +11,7 @@ namespace
     constexpr float kAlphaResting   = 0.75f;   // resting interactive / primary message
     constexpr float kAlphaSecondary = 0.45f;   // secondary text, the progress line
     constexpr float kAlphaHairline  = 0.40f;   // every floating surface's border
+    constexpr float kAlphaRefused   = 0.20f;   // the drop outline for files it can't load
     constexpr float kAlphaDivider   = 0.16f;   // section dividers; the waveform
     constexpr float kAlphaGrid      = 0.12f;   // octave lines in the roll
     constexpr float kAlphaWatermark = 0.10f;
@@ -115,12 +116,13 @@ void Canvas::setLoadStatus (const juce::String& loading, const juce::String& err
     repaint();
 }
 
-void Canvas::setDragHover (bool isHovering)
+void Canvas::setDragHover (bool isHovering, bool acceptable)
 {
-    if (isHovering == dragHover)
+    if (isHovering == dragHover && acceptable == dragAcceptable)
         return;
 
     dragHover = isHovering;
+    dragAcceptable = acceptable;
     layoutActionChip();
     repaint();
 }
@@ -573,7 +575,7 @@ void Canvas::paintScene (juce::Graphics& g)
 
     if (dragHover)
     {
-        g.setColour (LnF::ink().withAlpha (kAlphaHairline));
+        g.setColour (LnF::ink().withAlpha (dragAcceptable ? kAlphaHairline : kAlphaRefused));
         g.drawRoundedRectangle (bounds.reduced (8.5f), 10.0f, 1.0f);
     }
 }
@@ -926,13 +928,14 @@ void Canvas::paintMessage (juce::Graphics& g) const
     }
     else if (dragHover)
     {
-        primary = source != nullptr ? "drop to replace" : "drop to load";
-        primaryAlpha = kAlphaHot;
+        primary = ! dragAcceptable ? "audio files only" : source != nullptr ? "drop to replace" : "drop to load";
+        primaryAlpha = dragAcceptable ? kAlphaHot : kAlphaSecondary;
     }
     else if (loadError.isNotEmpty())
     {
-        primary = loadError;
-        secondary = "try another file";
+        // "what happened\nwhat to do"
+        primary = loadError.upToFirstOccurrenceOf ("\n", false, false);
+        secondary = loadError.fromFirstOccurrenceOf ("\n", false, false);
     }
     else if (status.primary.isNotEmpty())
     {

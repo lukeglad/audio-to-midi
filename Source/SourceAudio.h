@@ -45,7 +45,7 @@ struct SourceAudio
 struct DecodeResult
 {
     std::shared_ptr<const SourceAudio> audio;   // null on failure
-    juce::String error;                          // user-facing, lowercase; empty when aborted
+    juce::String error;                          // user-facing, lowercase, "what happened\nwhat to do"; empty when aborted
 
     // What the plugin keeps in its saved state so the audio comes back
     // without the file: the file's own bytes when it is already a compressed

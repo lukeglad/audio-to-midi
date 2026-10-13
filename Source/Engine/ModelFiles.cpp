@@ -52,10 +52,27 @@ std::optional<ModelSize> modelSizeFromName (const juce::String& name)
     return std::nullopt;
 }
 
+namespace
+{
+    juce::File& directoryOverride()
+    {
+        static juce::File directory;
+        return directory;
+    }
+}
+
 juce::File modelsDirectory()
 {
+    if (directoryOverride() != juce::File())
+        return directoryOverride();
+
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
                .getChildFile ("Application Support/AudioFlower/models");
+}
+
+void overrideModelsDirectory (const juce::File& directory)
+{
+    directoryOverride() = directory;
 }
 
 juce::File modelFile (ModelSize size)

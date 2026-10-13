@@ -20,6 +20,16 @@ namespace atm
 enum class Phase   { queued, resampling, loadingModel, transcribing };
 enum class Outcome { finished, cancelled, failed };
 
+/** Why a job failed, in the terms the UI acts on. */
+enum class Failure
+{
+    none,
+    modelInvalid,   // the checkpoint is damaged or from another release: replace it
+    modelMissing,   // the checkpoint went away between the check and the load
+    outOfMemory,    // the model doesn't fit: a smaller one might
+    other           // anything else the engine reports
+};
+
 /**
     One transcription: the audio to run, which model, and where to send what
     comes back. Owned by whoever submitted it (shared with the service only
@@ -46,9 +56,12 @@ struct TranscriptionJob
         transcription is now complete. Each note arrives exactly once. */
     std::function<void (std::vector<msl::Note> newNotes, double finalizedThrough)> onNotes;
 
-    /** `device` is the backend the model ran on ("metal" or "cpu"); `error`
-        is user-facing, lowercase, empty unless failed. */
-    std::function<void (Outcome, juce::String error, juce::String device)> onFinished;
+    /** Once the model has loaded: the backend it runs on ("metal" or "cpu"). */
+    std::function<void (juce::String device)> onLoaded;
+
+    /** `failure` is none unless the outcome is failed; `detail` is the
+        engine's own description, for logs. */
+    std::function<void (Outcome, Failure, juce::String detail)> onFinished;
 
     void cancel() noexcept { cancelled = true; }
     std::atomic<bool> cancelled { false };

@@ -6,19 +6,28 @@ namespace atm
 
 namespace
 {
-    juce::String describeLoadError (msl::Error error, const juce::File& file, bool explicitDevice)
+    Failure classify (msl::Error error)
     {
-        if (error == msl::Error::UnsupportedCheckpointVersion)
-            return file.getFileName().toLowerCase() + " is for another version of this plugin"
-                   + juce::String (juce::CharPointer_UTF8 (" \xC2\xB7 ")) + "delete it from the models folder";
-        if (error == msl::Error::DeviceUnavailable)
-            return explicitDevice ? "that device can't be used" : "no device could be used";
-        if (error == msl::Error::OutOfMemory)
-            return "out of memory";
-        if (error == msl::Error::FileNotFound)
-            return "model file is missing";
+        switch (error)
+        {
+            case msl::Error::InvalidCheckpoint:
+            case msl::Error::UnsupportedArch:
+            case msl::Error::UnsupportedCheckpointVersion:
+                return Failure::modelInvalid;
+            case msl::Error::FileNotFound:
+                return Failure::modelMissing;
+            case msl::Error::OutOfMemory:
+                return Failure::outOfMemory;
+            case msl::Error::DeviceUnavailable:
+            case msl::Error::ContextOverflow:
+            case msl::Error::Cancelled:
+            case msl::Error::InvalidArgument:
+            case msl::Error::Internal:
+            case msl::Error::InvalidResumePoint:
+                break;
+        }
 
-        return juce::String (msl::describe (error)).toLowerCase();
+        return Failure::other;
     }
 
     juce::String backendLabel (const msl::Device& device)
@@ -93,7 +102,7 @@ void TranscriptionService::run()
         if (job->cancelled)
         {
             if (job->onFinished)
-                job->onFinished (Outcome::cancelled, {}, {});
+                job->onFinished (Outcome::cancelled, Failure::none, {});
         }
         else
         {
@@ -113,10 +122,10 @@ void TranscriptionService::runJob (TranscriptionJob& job)
         if (job.onProgress)
             job.onProgress (phase, fraction);
     };
-    const auto finish = [&job] (Outcome outcome, juce::String error, juce::String device)
+    const auto finish = [&job] (Outcome outcome, Failure failure = Failure::none, juce::String detail = {})
     {
         if (job.onFinished)
-            job.onFinished (outcome, std::move (error), std::move (device));
+            job.onFinished (outcome, failure, std::move (detail));
     };
 
     // 1. 16 kHz mono for the model.
@@ -124,7 +133,7 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     const auto samples = resampleForModel (*job.source, shouldCancel);
 
     if (job.cancelled)
-        return finish (Outcome::cancelled, {}, {});
+        return finish (Outcome::cancelled);
 
     // A first tempo from the audio's opening minute: cheap, and it puts the
     // beat grid on screen before the model has even loaded.
@@ -151,16 +160,19 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     if (! transcriber.has_value())
     {
         if (transcriber.error() == msl::Error::Cancelled)
-            return finish (Outcome::cancelled, {}, {});
+            return finish (Outcome::cancelled);
 
-        const auto error = describeLoadError (transcriber.error(), file, job.forceCpu);
-        juce::Logger::writeToLog ("transcription: failed to load " + file.getFullPathName() + ": " + error);
-        return finish (Outcome::failed, error, {});
+        const auto detail = juce::String (msl::describe (transcriber.error()));
+        juce::Logger::writeToLog ("transcription: failed to load " + file.getFullPathName() + ": " + detail);
+        return finish (Outcome::failed, classify (transcriber.error()), detail);
     }
 
     const auto device = backendLabel (transcriber->device());
     juce::Logger::writeToLog ("transcription: " + juce::String (modelInfo (job.model).name) + " loaded on "
                               + juce::String (transcriber->device().name) + " (" + device + ")");
+
+    if (job.onLoaded)
+        job.onLoaded (device);
 
     // 3. Transcribe, streaming each chunk's notes out as it closes.
     progress (Phase::transcribing, 0.0f);
@@ -190,11 +202,11 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     if (! result.has_value())
     {
         if (result.error() == msl::Error::Cancelled)
-            return finish (Outcome::cancelled, {}, device);
+            return finish (Outcome::cancelled);
 
-        const auto error = juce::String (msl::describe (result.error())).toLowerCase();
-        juce::Logger::writeToLog ("transcription: failed: " + error);
-        return finish (Outcome::failed, error, device);
+        const auto detail = juce::String (msl::describe (result.error()));
+        juce::Logger::writeToLog ("transcription: failed: " + detail);
+        return finish (Outcome::failed, classify (result.error()), detail);
     }
 
     // The refined tempo: the whole file, with the notes sharpening the onsets
@@ -204,7 +216,7 @@ void TranscriptionService::runJob (TranscriptionJob& job)
 
     // Every note was already delivered through the callback; the return value
     // is the same list joined. The model is released when `transcriber` goes.
-    finish (Outcome::finished, {}, device);
+    finish (Outcome::finished);
 }
 
 juce::String instrumentDisplayName (int program)

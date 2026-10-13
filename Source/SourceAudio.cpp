@@ -74,13 +74,13 @@ namespace
                                    const std::function<bool()>& shouldAbort)
     {
         if (reader == nullptr)
-            return fail ("can't read this file");
+            return fail ("this file can't be opened\ntry another audio file");
 
         if (reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0)
-            return fail ("this file has no audio in it");
+            return fail ("this file has no audio in it\ntry another audio file");
 
         if ((double) reader->lengthInSamples / reader->sampleRate > kMaxSeconds)
-            return fail ("files up to 15 minutes only");
+            return fail ("this file is longer than 15 minutes\ntrim it and drop it again");
 
         auto audio = std::make_shared<SourceAudio>();
         audio->fileName   = fileName;
@@ -99,7 +99,7 @@ namespace
 
             const int n = juce::jmin (blockSize, length - pos);
             if (! reader->read (&audio->samples, pos, n, pos, true, numChannels > 1))
-                return fail ("couldn't decode this file");
+                return fail ("this file seems damaged\ntry exporting it again");
         }
 
         if (shouldAbort())

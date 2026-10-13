@@ -50,7 +50,9 @@ public:
 
     void setSource (std::shared_ptr<const SourceAudio>);
     void setLoadStatus (const juce::String& loadingFileName, const juce::String& loadError);
-    void setDragHover (bool isHovering);
+    /** `acceptable`: the dragged files include audio this can load. Anything
+        else gets a dim outline and "audio files only" rather than nothing. */
+    void setDragHover (bool isHovering, bool acceptable = true);
     void setWordmarkTypeface (juce::Typeface::Ptr);
     void setStatus (const Status&);
 
@@ -198,7 +200,7 @@ private:
 
     std::shared_ptr<const SourceAudio> source;
     juce::String loadingFileName, loadError;
-    bool dragHover = false;
+    bool dragHover = false, dragAcceptable = true;
     juce::Typeface::Ptr wordmarkTypeface;
     Status status;
     double progressTime = -1.0;

@@ -7,11 +7,13 @@
 #include "Engine/TranscriptionService.h"
 #include "SourceAudio.h"
 
+#include <set>
+
 //==============================================================================
 enum class TranscriptionPhase
 {
     none,              // nothing loaded, or a load that produced nothing
-    waitingForModel,   // audio loaded, chosen model not installed (downloading, failed, or not started)
+    waitingForModel,   // audio loaded, chosen model not installed (downloading, failed, or cancelled)
     queued,
     resampling,
     loadingModel,
@@ -28,9 +30,10 @@ struct TranscriptionState
     float progress = -1.0f;            // within loadingModel / transcribing; negative = nothing to measure yet
     double finalizedThrough = 0.0;     // seconds of audio the notes below are complete for
     std::vector<msl::Note> notes;      // raw engine output, in arrival order
-    juce::String error;                // failed only
+    atm::Failure failure = atm::Failure::none;   // failed only
     juce::String device;               // "metal" / "cpu", once the model loaded
     atm::ModelSize model = atm::kDefaultModelSize;
+    bool updatingModel = false;        // waiting on a download that replaces a damaged or outdated model
 
     bool isRunning() const noexcept
     {
@@ -131,7 +134,8 @@ public:
     double getHostBpm() const noexcept { return hostBpm.load(); }
 
     /** Runs the loaded audio through the preferred model, replacing any
-        earlier result. With no model installed, waits for one. */
+        earlier result. With the model not installed, starts its download
+        (dropping a file is the consent) and transcribes once it lands. */
     void startTranscription();
     void cancelTranscription();
 
@@ -143,6 +147,9 @@ public:
 
     /** After a failure or cancellation: run again, or restart the download. */
     void retry();
+
+    /** The next model down from `size`, for when `size` doesn't fit in memory. */
+    static std::optional<atm::ModelSize> smallerModel (atm::ModelSize size);
 
     atm::ModelDownloader& getDownloader() noexcept { return *downloader; }
 
@@ -205,7 +212,8 @@ private:
     void onJobTempo (int generation, atm::TempoEstimate);
     void notesChanged();
     void onJobNotes (int generation, std::vector<msl::Note> newNotes, double finalizedThrough);
-    void onJobFinished (int generation, atm::Outcome, juce::String error, juce::String device);
+    void onJobLoaded (int generation, juce::String device);
+    void onJobFinished (int generation, atm::Outcome, atm::Failure);
 
     std::shared_ptr<const SourceAudio> source;
     std::shared_ptr<const juce::MemoryBlock> stateAudio;
@@ -223,6 +231,7 @@ private:
     std::atomic<double> hostBpm { 120.0 };
     std::shared_ptr<atm::TranscriptionJob> job;
     int jobGeneration = 0;   // a callback from an older job is ignored
+    std::set<atm::ModelSize> replacedModels;   // replaced once this session; a second failure is reported
 
     // Shared by every instance in the process. Declared before the pool and
     // the job so they go last: the service's destructor waits for the running
