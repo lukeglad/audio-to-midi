@@ -78,6 +78,7 @@ Canvas::Canvas()
     quantizeLabel.onGridChanged   = [this] (atm::Grid g) { if (onGridChanged) onGridChanged (g); };
     quantizeLabel.onPercentHovered = [this] { showFader(); };
     quantizeLabel.onWidthChanged = [this] { layoutQuantize(); repaint (rollArea()); };
+    quantizeLabel.onTempoChanged = [this] (double bpm) { if (onTempoChanged) onTempoChanged (bpm); };
     quantizeFader.onChanged = [this] (double v) { quantizeLabel.setValues (v, (atm::Grid) gridDivisions); if (onQuantizeChanged) onQuantizeChanged (v); };
     addChildComponent (quantizeLabel);
     addChildComponent (quantizeFader);
@@ -491,6 +492,11 @@ void Canvas::resized()
     layoutQuantize();
 }
 
+void Canvas::setTempo (double bpm, bool editable)
+{
+    quantizeLabel.setTempo (bpm, editable);
+}
+
 void Canvas::setQuantize (double amount01, atm::Grid quantizeGrid, bool hasGrid)
 {
     quantizeLabel.setValues (amount01, quantizeGrid);
@@ -868,21 +874,25 @@ void Canvas::paintGrid (juce::Graphics& g) const
     const bool drawSubdivisions = gridDivisions > 1 && subdivisionAlpha > 0.004f;
     const bool drawNumbers = beatPx * (float) grid->beatsPerBar >= 26.0f;
 
-    const int firstK = (int) std::floor (-grid->firstBeat / beat);
+    // A beat up to 8% of a beat before the audio (the estimator's and the
+    // export's grace) belongs to it: drawn at the start, and numbered.
+    constexpr double kGraceBeats = 0.08;
+    const int firstK = (int) std::ceil ((-kGraceBeats * beat - grid->firstBeat) / beat);
     const int lastK  = (int) std::ceil ((length - grid->firstBeat) / beat);
 
     g.setFont (LnF::uiFont (11.0f));
 
     for (int k = firstK; k <= lastK; ++k)
     {
-        const double t = grid->beatTime (k);
+        const double beatTime = grid->beatTime (k);
+        const double t = juce::jmax (0.0, beatTime);   // a beat in the grace before 0 draws at 0
 
         if (drawSubdivisions)
         {
             g.setColour (LnF::ink().withAlpha (subdivisionAlpha));
             for (int d = 1; d < gridDivisions; ++d)
             {
-                const double ts = t + d * beat / gridDivisions;
+                const double ts = beatTime + d * beat / gridDivisions;
                 if (ts >= 0.0 && ts <= length)
                     g.drawVerticalLine (juce::roundToInt (timeToX (ts)), area.getY(), area.getBottom());
             }

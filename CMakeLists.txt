@@ -58,7 +58,7 @@ set (ENGINE_SOURCES
 
 #===============================================================================
 juce_add_plugin (AudioToMidi
-    # Working title. PRODUCT_NAME is safe to change later; PLUGIN_CODE and
+    # The product's name (decided 2026-10-15). PLUGIN_CODE and
     # PLUGIN_MANUFACTURER_CODE are what hosts identify the plugin by, so they
     # must never change once a build is out.
     PRODUCT_NAME                "Audio to MIDI"

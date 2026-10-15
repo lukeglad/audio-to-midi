@@ -47,7 +47,7 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
         else
             guide.open ({ &topBar, &canvas });
     };
-    topBar.onBpmChanged = [this] (double bpm) { processorRef.setBpm (bpm); };
+    canvas.onTempoChanged = [this] (double bpm) { processorRef.setBpm (bpm); };
     canvas.onQuantizeChanged = [this] (double amount)
     {
         auto settings = processorRef.getCleanup();
@@ -267,7 +267,7 @@ void AudioToMidiEditor::refreshFromProcessor()
     }
 
     const auto& tempo = processorRef.getTempo();
-    topBar.setTempo (tempo.hasEstimate && source != nullptr && ! recording, tempo.bpm, ! tempo.fromHost);
+    canvas.setTempo (tempo.bpm, ! tempo.fromHost);
 
     canvas.setQuantize (processorRef.getCleanup().quantize, processorRef.getCleanup().grid, tempo.hasEstimate);
     canvas.setGridDivisions ((int) processorRef.getCleanup().grid);

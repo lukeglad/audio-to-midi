@@ -13,9 +13,11 @@ DragValue::DragValue()
 
     setColour (juce::Label::textColourId, LnF::ink());
     setColour (juce::Label::textWhenEditingColourId, LnF::ink());
-    setColour (juce::Label::backgroundWhenEditingColourId, LnF::ink().withAlpha (0.10f));
-    setColour (juce::Label::outlineWhenEditingColourId, LnF::ink().withAlpha (0.40f));
-    setColour (juce::TextEditor::highlightColourId, LnF::ink().withAlpha (0.25f));
+    // Typing happens in place: no box, no outline, the same type where the
+    // value was; a thin underline (paintOverChildren) says it's editable.
+    setColour (juce::Label::backgroundWhenEditingColourId, juce::Colours::transparentBlack);
+    setColour (juce::Label::outlineWhenEditingColourId, juce::Colours::transparentBlack);
+    setColour (juce::TextEditor::highlightColourId, LnF::ink().withAlpha (0.18f));
     setColour (juce::CaretComponent::caretColourId, LnF::ink());
 
     format = [] (double v) { return juce::String (v, 1); };
@@ -73,10 +75,38 @@ void DragValue::mouseUp (const juce::MouseEvent& e)
 
 void DragValue::editorShown (juce::TextEditor* editor)
 {
-    editor->setText (juce::String (value, 2).trimCharactersAtEnd ("0").trimCharactersAtEnd ("."), false);
+    editor->setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+    editor->setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+    editor->setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+    editor->setColour (juce::TextEditor::textColourId, LnF::ink());
+    editor->setColour (juce::TextEditor::highlightedTextColourId, LnF::ink());
+    editor->setColour (juce::TextEditor::highlightColourId, LnF::ink().withAlpha (0.18f));
+    editor->setColour (juce::CaretComponent::caretColourId, LnF::ink());
+
+    // The same font, place and alignment as the value: no padding.
+    editor->setBorder ({});
+    editor->setIndents (0, 0);
     editor->setFont (LnF::uiFont (getFont().getHeight()));
-    editor->setJustification (juce::Justification::centredLeft);
+    editor->setJustification (getJustificationType());
+
+    editor->setText (juce::String (value, 2).trimCharactersAtEnd ("0").trimCharactersAtEnd ("."), false);
     editor->selectAll();
+    repaint();
+}
+
+void DragValue::editorAboutToBeHidden (juce::TextEditor*)
+{
+    repaint();
+}
+
+void DragValue::paintOverChildren (juce::Graphics& g)
+{
+    // While typing: a hairline under the text, the only sign of the field.
+    if (isBeingEdited())
+    {
+        g.setColour (LnF::ink().withAlpha (0.5f));
+        g.fillRect (0.0f, (float) getHeight() * 0.5f + getFont().getHeight() * 0.5f + 1.0f, (float) getWidth(), 1.0f);
+    }
 }
 
 void DragValue::textWasEdited()

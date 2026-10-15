@@ -2,6 +2,7 @@
 
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
 
@@ -156,8 +157,54 @@ namespace
     }
 }
 
+std::optional<NamedTempo> tempoFromFileName (const juce::String& fileName)
+{
+    const auto name = juce::File (fileName).getFileNameWithoutExtension().toLowerCase();
+    constexpr double kMin = 50.0, kMax = 220.0;
+
+    // Tokens of digits (with an optional decimal part), noting whether
+    // "bpm" sits right next to them.
+    std::optional<NamedTempo> bare;
+    for (int i = 0; i < name.length();)
+    {
+        if (! juce::CharacterFunctions::isDigit (name[i]))
+        {
+            ++i;
+            continue;
+        }
+
+        int end = i;
+        while (end < name.length() && (juce::CharacterFunctions::isDigit (name[end]) || name[end] == '.'))
+            ++end;
+
+        const auto token = name.substring (i, end);
+        const double value = token.getDoubleValue();
+        const auto before = name.substring (0, i).trimEnd();
+        const auto after = name.substring (end).trimStart();
+        const bool labelled = after.startsWith ("bpm") || after.startsWith ("_bpm") || after.startsWith ("-bpm")
+                           || before.endsWith ("bpm") || before.endsWith ("bpm_") || before.endsWith ("bpm-");
+
+        // A bare number has to stand alone (between separators or the ends),
+        // so "44k", "v2", "track01" and dates don't count.
+        const auto isSeparator = [] (juce::juce_wchar c) { return c == '_' || c == '-' || c == ' ' || c == '.' || c == '(' || c == ')' || c == '['; };
+        const bool standsAlone = (i == 0 || isSeparator (name[i - 1])) && (end == name.length() || isSeparator (name[end]));
+
+        if (value >= kMin && value <= kMax)
+        {
+            if (labelled)
+                return NamedTempo { value, true };
+            if (standsAlone && ! bare.has_value())
+                bare = NamedTempo { value, false };
+        }
+
+        i = end;
+    }
+
+    return bare;
+}
+
 TempoEstimate estimateTempo (std::span<const float> samples16k, std::span<const msl::Note> notes,
-                             const std::function<bool()>& shouldAbort)
+                             const std::function<bool()>& shouldAbort, std::optional<NamedTempo> named)
 {
     TempoEstimate result;
 
@@ -245,6 +292,22 @@ TempoEstimate estimateTempo (std::span<const float> samples16k, std::span<const 
         }
     }
 
+    // A tempo from the file name, when the audio backs it (its own pulse a
+    // simple multiple or fraction of the name's) or the name says "bpm":
+    // take it exactly, and fit where its beats fall.
+    if (named.has_value())
+    {
+        bool agrees = named->labelled;
+        for (const double k : { 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0, 1.5, 2.0, 3.0, 4.0 })
+            agrees = agrees || std::abs (named->bpm / (bestBpm * k) - 1.0) < 0.06;
+
+        if (agrees)
+        {
+            bestBpm = named->bpm;
+            bestFit = gridFit (odf, 60.0 * kFrameRate / bestBpm, bestPhase);
+        }
+    }
+
     result.bpm = std::round (bestBpm * 100.0) / 100.0;
     result.firstBeat = bestPhase / kFrameRate;
 
@@ -285,6 +348,20 @@ TempoEstimate estimateTempo (std::span<const float> samples16k, std::span<const 
         {
             bestBar = score;
             result.downbeat = d;
+        }
+    }
+
+    // A beat a hair before the audio starts (within the export's grace) is
+    // the audio's first beat: a loop cut on its downbeat, played a touch
+    // late, would otherwise have its first bar counted as a pickup and the
+    // ruler's "1" land on its second bar.
+    {
+        constexpr double kGraceBeats = 0.08;
+        const double beatSeconds = 60.0 / result.bpm;
+        if (beatSeconds - result.firstBeat <= kGraceBeats * beatSeconds)
+        {
+            result.firstBeat -= beatSeconds;
+            result.downbeat = (result.downbeat + 1) % result.beatsPerBar;
         }
     }
 

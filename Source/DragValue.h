@@ -36,6 +36,8 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void editorShown (juce::TextEditor*) override;
+    void editorAboutToBeHidden (juce::TextEditor*) override;
+    void paintOverChildren (juce::Graphics&) override;
     void textWasEdited() override;
 
 private:

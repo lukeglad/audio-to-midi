@@ -9,12 +9,10 @@
 //==============================================================================
 /**
     The 20 px top bar: the only fixed furniture (house rule). Global things
-    only. Left: the preview mix (play lives in the waveform corner), then the tempo
-    readout (drag or type the BPM), shown once a file is loaded and a
-    tempo exists. (Quantize lives at the bottom-right of the piano roll.)
-    Centre:
-    the loaded file's name and length, kept clear of both sides. Right: the
-    model control. The "?" guide arrives in a later build step.
+    only. Left: the preview mix (play lives in the waveform corner; the tempo
+    moved to the grid pill at the roll's bottom-right on 2026-10-15). Centre:
+    the loaded file's name and length, kept clear of both sides, or the
+    copper recording readout. Right: the model control, then the "?".
 
     The model control is a button; the editor builds and shows its menu, since
     the menu's contents depend on download state the bar doesn't own.
@@ -30,9 +28,6 @@ public:
     /** The model control's text, e.g. "medium" or "medium · 43%". */
     void setModelLabel (const juce::String&);
 
-    /** The tempo readout. `hasTempo` false hides it; `editable` false makes
-        it a plain readout (a recording's tempo is the host's). */
-    void setTempo (bool hasTempo, double bpm, bool editable = true);
 
     /** Shown in copper in place of the file readout while non-empty:
         "recording · from bar 9 · 0:04". */
@@ -48,7 +43,6 @@ public:
     /** The "?" left of the model control: opens the quick guide. */
     std::function<void()> onHelpClicked;
 
-    std::function<void (double)> onBpmChanged;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -79,8 +73,6 @@ private:
     DragValue mixValue;
     bool hasFile = false;
 
-    DragValue bpmValue;
-    bool hasTempo = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TopBar)
 };

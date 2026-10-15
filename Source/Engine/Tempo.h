@@ -4,7 +4,10 @@
 
 #include "HostTiming.h"
 
+#include <juce_core/juce_core.h>
+
 #include <functional>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -42,8 +45,26 @@ namespace atm
         Blocking (tens of milliseconds for a song). `shouldAbort` is polled;
         an aborted call returns the default estimate with confidence 0.
     */
+    /** A tempo named in a file name, the way sample packs name loops:
+        "loop_90bpm.wav", "Keys 128 BPM.wav" (`labelled`: say "bpm", so
+        trusted) or a bare number token like Splice's "SP_SZ_154_piano.wav"
+        (only a candidate: estimateTempo checks it against the audio). */
+    struct NamedTempo
+    {
+        double bpm = 0.0;
+        bool labelled = false;
+    };
+    std::optional<NamedTempo> tempoFromFileName (const juce::String& fileName);
+
+    /** `named`, if given, is the file name's tempo: a labelled one is used
+        as is; a bare number only when the audio's own pulse is a simple
+        multiple or fraction of it (a sparse loop otherwise reads a chord
+        per bar as a chord per beat: 39.7 BPM for a 154 BPM felt-piano loop,
+        2026-10-15). Either way the beats are then fitted to the audio at
+        exactly that tempo. */
     TempoEstimate estimateTempo (std::span<const float> samples16k, std::span<const msl::Note> notes,
-                                 const std::function<bool()>& shouldAbort = {});
+                                 const std::function<bool()>& shouldAbort = {},
+                                 std::optional<NamedTempo> named = std::nullopt);
 
     /** The host's grid as a recording sees it: beats at the host's quarter
         notes, bars where the host has them, confidence 1. */

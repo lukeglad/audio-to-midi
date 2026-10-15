@@ -6,9 +6,14 @@
 
 //==============================================================================
 /**
-    Quantize, at the bottom-right of the piano roll: a quiet label
+    The grid pill, at the bottom-right of the piano roll: everything that
+    shapes the grid, together (tempo joined quantize here 2026-10-15, from
+    mockups/transport-layouts.html):
 
-        quantize  50%  1/16 ⌄
+        126 BPM  ·  quantize  50%  1/16 ⌄
+
+    The tempo drags or double-clicks to type, like the percentage; a
+    recording's tempo is the host's and only reads.
 
     on a faint surface-shaded backing (no hairline), so notes passing behind
     don't make it unreadable. The percentage drags up/down or double-clicks
@@ -24,6 +29,10 @@ public:
     QuantizeLabel();
 
     void setValues (double amount01, atm::Grid);
+
+    /** The tempo at the pill's left. `editable` false: a readout only. */
+    void setTempo (double bpm, bool editable);
+    std::function<void (double bpm)> onTempoChanged;
     void setSurfaceColour (juce::Colour);
 
     /** Where the percentage sits, in the label's coordinates: the fader
@@ -49,8 +58,11 @@ public:
 
 private:
     juce::Rectangle<int> gridBounds() const;
+    int tempoWidth() const;
+    int quantizeX() const;   // where "quantize" starts, after the tempo and the dot
     void showGridMenu();
 
+    DragValue tempo;
     DragValue percent;
     atm::Grid grid = atm::Grid::sixteenth;
     juce::Colour surface;

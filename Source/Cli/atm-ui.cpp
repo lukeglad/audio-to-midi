@@ -10,6 +10,7 @@
 
 #include <JuceHeader.h>
 
+#include "DragValue.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 
@@ -106,6 +107,24 @@ int main (int argc, char* argv[])
                 save (*editor, outDir.getChildFile ("guide-end-" + tag + ".png"));
             }
             guide->close();
+        }
+
+        // Typing into the tempo (the grid pill's DragValue that says BPM).
+        std::function<DragValue* (juce::Component&)> findTempo = [&] (juce::Component& c) -> DragValue*
+        {
+            if (auto* d = dynamic_cast<DragValue*> (&c); d != nullptr && d->getText().contains ("BPM")) return d;
+            for (auto* child : c.getChildren()) if (auto* d = findTempo (*child)) return d;
+            return nullptr;
+        };
+        if (auto* tempo = findTempo (*editor))
+        {
+            tempo->showEditor();
+            pump (100);
+            if (auto* ed = tempo->getCurrentTextEditor())
+                ed->setHighlightedRegion ({});   // the caret, not the select-all, so the type shows plainly
+            pump (100);
+            save (*editor, outDir.getChildFile ("tempo-edit-" + tag + ".png"));
+            tempo->hideEditor (true);
         }
 
         // The model menu, opened the way a click opens it.

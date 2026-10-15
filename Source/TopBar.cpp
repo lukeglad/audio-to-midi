@@ -7,7 +7,6 @@ namespace
 {
     constexpr float kTextSize = 14.0f;
     constexpr int   kSideInset = 10;
-    constexpr int   kGroupGap = 6;
 
     juce::String formatLength (double seconds)
     {
@@ -83,22 +82,6 @@ TopBar::TopBar()
     mixValue.setFont (LnF::uiFont (kTextSize));
     addChildComponent (mixValue);
 
-    // Tempo: 20-400 BPM, a quarter of a BPM per pixel (shift for a fortieth).
-    bpmValue.setRange (20.0, 400.0, 0.25);
-    bpmValue.format = [] (double bpm)
-    {
-        // Whole numbers stay whole; a detected 92.35 shows as such.
-        const bool whole = std::abs (bpm - std::round (bpm)) < 0.005;
-        return (whole ? juce::String (juce::roundToInt (bpm)) : juce::String (bpm, 2)) + " BPM";
-    };
-    bpmValue.parse = [] (const juce::String& text)
-    {
-        const auto digits = text.retainCharacters ("0123456789.");
-        return digits.isEmpty() ? std::numeric_limits<double>::quiet_NaN() : digits.getDoubleValue();
-    };
-    bpmValue.onValueChanged = [this] (double bpm) { if (onBpmChanged) onBpmChanged (bpm); };
-    bpmValue.setFont (LnF::uiFont (kTextSize));
-    addChildComponent (bpmValue);
 
 
 }
@@ -123,20 +106,6 @@ void TopBar::setModelLabel (const juce::String& label)
     modelButton.repaint();
 }
 
-void TopBar::setTempo (bool has, double bpm, bool editable)
-{
-    hasTempo = has;
-    bpmValue.setDraggable (editable);
-
-    for (auto* c : std::initializer_list<juce::Component*> { &bpmValue })
-        c->setVisible (has);
-
-    if (! bpmValue.isBeingEdited())
-        bpmValue.setValue (bpm, juce::dontSendNotification);
-
-    resized();   // the readout's width follows its text
-}
-
 void TopBar::setMix (bool has, float mix01)
 {
     hasFile = has;
@@ -157,16 +126,12 @@ void TopBar::resized()
 
     auto left = getLocalBounds().withTrimmedLeft (kSideInset);
 
-    // The mix first; the tempo group a wider gap on from it.
+    // The mix at the left (the tempo moved to the grid pill, 2026-10-15).
     if (hasFile)
     {
         const int mixW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), mixValue.getText())) + 6;
         mixValue.setBounds (left.removeFromLeft (mixW));
-        left.removeFromLeft (kGroupGap * 2);
     }
-
-    const int bpmW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), bpmValue.getText())) + 6;
-    bpmValue.setBounds (left.removeFromLeft (bpmW));
 }
 
 void TopBar::setLiveText (const juce::String& text)
@@ -185,7 +150,7 @@ void TopBar::paint (juce::Graphics& g)
         // Centred like the file readout, and kept clear of the controls
         // either side on a narrow window: cut with an ellipsis if it must.
         const auto font = LnF::uiFont (kTextSize);
-        const float leftEdge  = (float) (hasTempo ? bpmValue.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
+        const float leftEdge  = (float) (hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
         const float rightEdge = (float) (modelButton.getX() - kSideInset);
         const float textW     = juce::jmin (rightEdge - leftEdge, juce::GlyphArrangement::getStringWidth (font, liveText) + 1.0f);
         const float x         = juce::jlimit (leftEdge, juce::jmax (leftEdge, rightEdge - textW), ((float) getWidth() - textW) * 0.5f);
@@ -211,7 +176,7 @@ void TopBar::paint (juce::Graphics& g)
 
     // Centred on the bar when it fits, otherwise centred in the space left
     // between the controls either side, the name cut with an ellipsis.
-    const float leftEdge  = (float) (hasTempo ? bpmValue.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
+    const float leftEdge  = (float) (hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
     const float rightEdge = (float) (modelButton.getX() - kSideInset);
     const float maxNameW  = juce::jmax (0.0f, rightEdge - leftEdge - gapW - lengthW);
     const float nameW     = juce::jmin (maxNameW, juce::GlyphArrangement::getStringWidth (font, fileName) + 1.0f);

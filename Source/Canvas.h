@@ -83,6 +83,11 @@ public:
         tempo grid to quantize to. */
     void setQuantize (double amount01, atm::Grid, bool hasGrid);
     std::function<void (double amount01)> onQuantizeChanged;
+
+    /** The tempo in the grid pill (with quantize). `editable` false for a
+        recording, whose tempo is the host's. */
+    void setTempo (double bpm, bool editable);
+    std::function<void (double bpm)> onTempoChanged;
     std::function<void (atm::Grid)> onGridChanged;
 
     /** The preview playhead, in seconds; negative hides it. Copper: the

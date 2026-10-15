@@ -23,11 +23,27 @@ namespace
     // centred in it: any spare room splits equally either side, so the two
     // gaps stay even and nothing shifts as the digits change.
     int valueSlotWidth() { return widthOf ("100%"); }
+
+    // Between the tempo and quantize: two groups, one pill.
+    const juce::String kDotText = juce::String (juce::CharPointer_UTF8 ("\xC2\xB7"));
+}
+
+int QuantizeLabel::tempoWidth() const
+{
+    // Measured from its own text: the pill is anchored at its right, so a
+    // tempo changing width moves only the pill's left edge, never the
+    // quantize parts.
+    return widthOf (tempo.getText()) + 1;
+}
+
+int QuantizeLabel::quantizeX() const
+{
+    return kPadX + tempoWidth() + kGap + widthOf (kDotText) + kGap;
 }
 
 int QuantizeLabel::getIdealWidth() const
 {
-    return kPadX + widthOf ("quantize") + kGap + valueSlotWidth() + kGap
+    return quantizeX() + widthOf ("quantize") + kGap + valueSlotWidth() + kGap
          + widthOf (atm::gridName (grid)) + kChevronW + kPadX;
 }
 
@@ -51,7 +67,46 @@ QuantizeLabel::QuantizeLabel()
     percent.addMouseListener (this, false);
     addAndMakeVisible (percent);
 
+    // Tempo: 20-400 BPM, a quarter of a BPM per pixel (shift for a fortieth).
+    tempo.setRange (20.0, 400.0, 0.25);
+    tempo.format = [] (double bpm)
+    {
+        // Whole numbers stay whole; a detected 92.35 shows as such.
+        const bool whole = std::abs (bpm - std::round (bpm)) < 0.005;
+        return (whole ? juce::String (juce::roundToInt (bpm)) : juce::String (bpm, 2)) + " BPM";
+    };
+    tempo.parse = [] (const juce::String& text)
+    {
+        const auto digits = text.retainCharacters ("0123456789.");
+        return digits.isEmpty() ? std::numeric_limits<double>::quiet_NaN() : digits.getDoubleValue();
+    };
+    tempo.onValueChanged = [this] (double bpm)
+    {
+        if (onTempoChanged) onTempoChanged (bpm);
+        resized();
+        if (onWidthChanged) onWidthChanged();
+    };
+    tempo.setFont (LnF::uiFont (kTextSize));
+    addAndMakeVisible (tempo);
+
     setValues (0.0, grid);
+}
+
+void QuantizeLabel::setTempo (double bpm, bool editable)
+{
+    tempo.setDraggable (editable);
+    if (tempo.isBeingEdited())
+        return;
+
+    const int widthBefore = getIdealWidth();
+    tempo.setValue (bpm, juce::dontSendNotification);
+
+    if (getIdealWidth() != widthBefore)
+    {
+        resized();
+        if (onWidthChanged)
+            onWidthChanged();
+    }
 }
 
 void QuantizeLabel::setValues (double amount01, atm::Grid newGrid)
@@ -82,13 +137,15 @@ void QuantizeLabel::setSurfaceColour (juce::Colour c)
 
 void QuantizeLabel::resized()
 {
-    // Laid out from the measured text: caption, gap, value, gap, grid.
-    percent.setBounds (kPadX + widthOf ("quantize") + kGap, 0, valueSlotWidth(), getHeight());
+    // Laid out from the measured text: tempo, dot, caption, value, grid,
+    // one gap apart.
+    tempo.setBounds (kPadX, 0, tempoWidth(), getHeight());
+    percent.setBounds (quantizeX() + widthOf ("quantize") + kGap, 0, valueSlotWidth(), getHeight());
 }
 
 juce::Rectangle<int> QuantizeLabel::gridBounds() const
 {
-    const int x = kPadX + widthOf ("quantize") + kGap + valueSlotWidth() + kGap;
+    const int x = quantizeX() + widthOf ("quantize") + kGap + valueSlotWidth() + kGap;
     return { x, 0, widthOf (atm::gridName (grid)) + kChevronW, getHeight() };
 }
 
@@ -105,7 +162,9 @@ void QuantizeLabel::paint (juce::Graphics& g)
 
     g.setFont (LnF::uiFont (kTextSize));
     g.setColour (LnF::ink().withAlpha (0.45f));
-    g.drawText ("quantize", juce::Rectangle<int> (kPadX, 0, widthOf ("quantize") + 1, getHeight()), juce::Justification::centredLeft, false);
+    g.drawText (kDotText, juce::Rectangle<int> (kPadX + tempoWidth() + kGap, 0, widthOf (kDotText) + 1, getHeight()),
+                juce::Justification::centredLeft, false);
+    g.drawText ("quantize", juce::Rectangle<int> (quantizeX(), 0, widthOf ("quantize") + 1, getHeight()), juce::Justification::centredLeft, false);
 
     // The grid, in the house dropdown style: text and a chevron.
     const auto gb = gridBounds();

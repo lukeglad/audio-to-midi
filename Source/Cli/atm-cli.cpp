@@ -141,6 +141,29 @@ namespace
                                             est.downbeat, est.confidence, pass ? "ok" : "WRONG"));
         }
 
+        // Tempos in file names: what counts, and what doesn't.
+        struct Name { const char* name; double bpm; bool labelled; };
+        const Name names[] = {
+            { "SP_SZ_154_piano_cant_understand_Amaj.wav", 154.0, false },
+            { "keys loop 90bpm.wav", 90.0, true },
+            { "Drums - 128 BPM - dry.aif", 128.0, true },
+            { "bpm_120_guitar.wav", 120.0, true },
+            { "song excerpt (stereo 44k).wav", 0.0, false },
+            { "track01 final 2024.m4a", 0.0, false },
+            { "New Recording 37.m4a", 0.0, false },
+            { "v2_mix.wav", 0.0, false },
+        };
+        for (const auto& n : names)
+        {
+            const auto found = atm::tempoFromFileName (n.name);
+            const bool pass = n.bpm <= 0.0 ? ! found.has_value()
+                                           : found.has_value() && juce::exactlyEqual (found->bpm, n.bpm) && found->labelled == n.labelled;
+            ok = ok && pass;
+            print (juce::String::formatted ("name: %-42s -> %s: %s", n.name,
+                                            found ? (juce::String (found->bpm, 0) + (found->labelled ? " (says bpm)" : " (bare)")).toRawUTF8() : "none",
+                                            pass ? "ok" : "WRONG"));
+        }
+
         return ok ? 0 : 1;
     }
 }
@@ -872,7 +895,11 @@ int main (int argc, char* argv[])
 
     // 4. Tempo, from the audio and the notes together.
     const auto t1 = juce::Time::getMillisecondCounterHiRes();
-    const auto est = atm::estimateTempo (atm::resampleForModel (audio), notes);
+    const auto named = atm::tempoFromFileName (audio.fileName);
+    const auto est = atm::estimateTempo (atm::resampleForModel (audio), notes, {}, named);
+    if (named.has_value())
+        print (juce::String::formatted ("named:    %.2f BPM in the file name (%s)%s", named->bpm, named->labelled ? "says bpm" : "bare number",
+                                        std::abs (est.bpm - named->bpm) < 0.01 ? ", used" : ", the audio disagrees: not used"));
     print (juce::String::formatted ("tempo:    %.2f BPM, first beat %.3f s, downbeat %d, confidence %.2f (%.0f ms)",
                                     est.bpm, est.firstBeat, est.downbeat, est.confidence,
                                     juce::Time::getMillisecondCounterHiRes() - t1));

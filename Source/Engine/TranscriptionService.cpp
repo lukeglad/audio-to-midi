@@ -152,7 +152,8 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     if (job.onTempo)
     {
         const size_t firstMinute = juce::jmin (samples.size(), (size_t) (60 * msl::Transcriber::SAMPLE_RATE));
-        job.onTempo (estimateTempo (std::span<const float> (samples.data(), firstMinute), {}, shouldCancel));
+        job.onTempo (estimateTempo (std::span<const float> (samples.data(), firstMinute), {}, shouldCancel,
+                                    tempoFromFileName (job.source->fileName)));
     }
 
     // 2. Load. The first availableDevices() call in the process initialises
@@ -242,7 +243,7 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     // The refined tempo: the whole file, with the notes sharpening the onsets
     // and deciding the downbeat.
     if (job.onTempo && ! job.cancelled)
-        job.onTempo (estimateTempo (samples, allNotes, shouldCancel));
+        job.onTempo (estimateTempo (samples, allNotes, shouldCancel, tempoFromFileName (job.source->fileName)));
 
     // Every note was already delivered through the callback; the return value
     // is the same list joined. The model is released when `transcriber` goes.

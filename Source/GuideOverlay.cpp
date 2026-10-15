@@ -24,8 +24,9 @@ namespace
           "Play previews the notes over your audio; drag \"mix\" to hear more of either. Hover a "
           "chip for mute and solo. Click or drag in the waveform to move around." },
         { "Timing",
-          "If the grid is off, drag the tempo or double-click it to type. Hover the quantize "
-          "percentage for a fader that pulls notes toward the grid; the grid size sits beside it." },
+          "Tempo and quantize sit together at the bottom right. If the grid is off, drag the tempo "
+          "or double-click it to type. Hover the quantize percentage for a fader that pulls notes "
+          "toward the grid; the grid size sits beside it." },
         { "Model",
           "Balanced suits most things. Fast is quicker; best is the most accurate and the slowest. "
           "Each downloads once, the first time you choose it from the model menu." },
