@@ -26,9 +26,9 @@ namespace
         { "Timing",
           "If the grid is off, drag the tempo or double-click it to type. Hover the quantize "
           "percentage for a fader that pulls notes toward the grid; the grid size sits beside it." },
-        { "Models",
-          "Medium suits most things. Small is faster; large is the most accurate and the slowest. "
-          "Each downloads once, the first time you choose it." },
+        { "Model",
+          "Balanced suits most things. Fast is quicker; best is the most accurate and the slowest. "
+          "Each downloads once, the first time you choose it from the model menu." },
     };
 
     // The model's licence (CC BY-NC 4.0) asks for both of these.

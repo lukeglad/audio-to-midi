@@ -61,6 +61,10 @@ namespace atm
     //==========================================================================
     // The chosen model is a per-user preference, not per-instance state: it
     // says which file is installed, and every instance should agree.
+    /** What the UI calls a size: the trade it makes, not the file it is
+        (fast / balanced / best). Files and settings keep `name`. */
+    const char* modelDisplayName (ModelSize);
+
     ModelSize preferredModel();
     void setPreferredModel (ModelSize);
 }

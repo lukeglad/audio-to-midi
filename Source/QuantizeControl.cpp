@@ -1,4 +1,5 @@
 #include "QuantizeControl.h"
+#include "GlassMenu.h"
 #include "AudioFlowerLookAndFeel.h"
 #include "Glass.h"
 
@@ -137,15 +138,19 @@ void QuantizeLabel::mouseUp (const juce::MouseEvent& e)
 
 void QuantizeLabel::showGridMenu()
 {
-    juce::PopupMenu menu;
+    auto* menu = GlassMenu::find (*this);
+    if (menu == nullptr)
+        return;
+
+    GlassMenu::Items items;
     for (const auto g : { atm::Grid::sixteenth, atm::Grid::eighth, atm::Grid::quarter })
-        menu.addItem ((int) g, atm::gridName (g), true, g == grid);
+        items.push_back ({ (int) g, atm::gridName (g), true, g == grid });
 
     menuOpen = true;
     repaint();
 
     juce::Component::SafePointer<QuantizeLabel> safeThis (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safeThis] (int result)
+    menu->showBelow (*this, std::move (items), [safeThis] (int result)
     {
         if (safeThis == nullptr)
             return;
@@ -154,7 +159,7 @@ void QuantizeLabel::showGridMenu()
         safeThis->repaint();
         if (result != 0 && safeThis->onGridChanged)
             safeThis->onGridChanged ((atm::Grid) result);
-    });
+    }, true);
 }
 
 //==============================================================================

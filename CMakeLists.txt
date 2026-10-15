@@ -99,6 +99,7 @@ target_sources (AudioToMidi PRIVATE
     Source/Chip.cpp
     Source/DragValue.cpp
     Source/Glass.cpp
+    Source/GlassMenu.cpp
     Source/GuideOverlay.cpp
     Source/LayerChip.cpp
     Source/PluginEditor.cpp
@@ -151,6 +152,7 @@ target_sources (atm-ui PRIVATE
     Source/Chip.cpp
     Source/DragValue.cpp
     Source/Glass.cpp
+    Source/GlassMenu.cpp
     Source/GuideOverlay.cpp
     Source/LayerChip.cpp
     Source/PluginEditor.cpp

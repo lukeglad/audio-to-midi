@@ -119,6 +119,17 @@ std::filesystem::path toPath (const juce::File& file)
     return { file.getFullPathName().toStdString() };
 }
 
+const char* modelDisplayName (ModelSize size)
+{
+    switch (size)
+    {
+        case ModelSize::small:  return "fast";
+        case ModelSize::medium: return "balanced";
+        case ModelSize::large:  return "best";
+    }
+    return "balanced";
+}
+
 ModelSize preferredModel()
 {
     return modelSizeFromName (settings().getValue ("model")).value_or (kDefaultModelSize);

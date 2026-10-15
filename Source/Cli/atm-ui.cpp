@@ -107,6 +107,23 @@ int main (int argc, char* argv[])
             }
             guide->close();
         }
+
+        // The model menu, opened the way a click opens it.
+        std::function<TopBar* (juce::Component&)> findTopBar = [&] (juce::Component& c) -> TopBar*
+        {
+            if (auto* t = dynamic_cast<TopBar*> (&c)) return t;
+            for (auto* child : c.getChildren()) if (auto* t = findTopBar (*child)) return t;
+            return nullptr;
+        };
+        if (auto* topBar = findTopBar (*editor))
+            if (auto* button = dynamic_cast<juce::Button*> (&topBar->getModelControl()))
+            {
+                button->triggerClick();
+                pump (200);
+                save (*editor, outDir.getChildFile ("model-menu-" + tag + ".png"));
+                if (auto* menu = GlassMenu::find (*topBar))
+                    menu->dismiss();
+            }
     }
 
     editor.reset();

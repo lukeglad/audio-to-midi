@@ -1,6 +1,7 @@
 #include "Canvas.h"
 #include "AudioFlowerLookAndFeel.h"
 #include "Engine/MidiExport.h"
+#include "GlassMenu.h"
 
 using LnF = AudioFlowerLookAndFeel;
 
@@ -400,11 +401,12 @@ void Canvas::refreshAllChip()
 
 void Canvas::showAllMenu()
 {
-    juce::PopupMenu menu;
-    menu.addItem (1, "save as .mid" + juce::String (juce::CharPointer_UTF8 ("\xE2\x80\xA6")));
+    auto* menu = GlassMenu::find (*this);
+    if (menu == nullptr)
+        return;
 
     juce::Component::SafePointer<Canvas> safeThis (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&allChip), [safeThis] (int result)
+    menu->showBelow (allChip, { { 1, "save as .mid" + juce::String (juce::CharPointer_UTF8 ("\xE2\x80\xA6")) } }, [safeThis] (int result)
     {
         if (safeThis == nullptr || result != 1 || ! safeThis->onSaveAll)
             return;
@@ -416,14 +418,14 @@ void Canvas::showAllMenu()
 
 void Canvas::showLayerMenu (int key)
 {
-    juce::PopupMenu menu;
-    menu.addItem (1, "save as .mid" + juce::String (juce::CharPointer_UTF8 ("\xE2\x80\xA6")));
-
+    auto* menu = GlassMenu::find (*this);
     auto* layer = findLayer (key);
-    juce::Component::SafePointer<Canvas> safeThis (this);
+    if (menu == nullptr || layer == nullptr)
+        return;
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (layer != nullptr ? layer->chip.get() : nullptr),
-                        [safeThis, key] (int result)
+    juce::Component::SafePointer<Canvas> safeThis (this);
+    menu->showBelow (*layer->chip, { { 1, "save as .mid" + juce::String (juce::CharPointer_UTF8 ("\xE2\x80\xA6")) } },
+                     [safeThis, key] (int result)
     {
         if (safeThis != nullptr && result == 1 && safeThis->onSaveLayer)
             safeThis->onSaveLayer (key);

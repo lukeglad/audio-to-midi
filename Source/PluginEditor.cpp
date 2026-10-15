@@ -36,7 +36,8 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     addAndMakeVisible (content);
     content.addAndMakeVisible (canvas);
     content.addAndMakeVisible (topBar);
-    content.addChildComponent (guide);   // last: on top of everything
+    content.addChildComponent (guide);
+    content.addChildComponent (menu);    // last: on top of everything
 
     topBar.onModelClicked = [this] { showModelMenu(); };
     topBar.onHelpClicked = [this]
@@ -172,6 +173,7 @@ void AudioToMidiEditor::resized()
     r.removeFromTop (6);
     canvas.setBounds (r);
     guide.setBounds (0, 0, cw, ch);
+    menu.setBounds (0, 0, cw, ch);
 }
 
 //==============================================================================
@@ -298,9 +300,11 @@ void AudioToMidiEditor::refreshFromProcessor()
     // The model control: the preferred model, with download progress while
     // one is coming down.
     const auto preferred = atm::preferredModel();
-    juce::String modelLabel = atm::modelInfo (preferred).name;
+    // Says what the control is; which model it's set to lives in its menu.
+    juce::String modelLabel = "model";
+    juce::ignoreUnused (preferred);
     if (const auto busy = downloader.busySize())
-        modelLabel = juce::String (atm::modelInfo (*busy).name) + kDot + percent (downloader.status (*busy).progress());
+        modelLabel += kDot + percent (downloader.status (*busy).progress());
     topBar.setModelLabel (modelLabel);
 
     // The status message: what's happening in plain words, with at most one
@@ -331,7 +335,7 @@ void AudioToMidiEditor::refreshFromProcessor()
         const auto ds = downloader.status (*busy);
         const auto& info = atm::modelInfo (*busy);
         const bool forThisAudio = audioWaiting && *busy == t.model;
-        const auto modelPhrase = forThisAudio ? juce::String ("the model") : "the " + juce::String (info.name) + " model";
+        const auto modelPhrase = forThisAudio ? juce::String ("the model") : "the " + juce::String (atm::modelDisplayName (*busy)) + " model";
 
         if (ds.phase == DPhase::verifying)
         {
@@ -448,7 +452,7 @@ void AudioToMidiEditor::refreshFromProcessor()
                 break;
 
             case TranscriptionPhase::loadingModel:
-                status.primary = "loading " + juce::String (atm::modelInfo (t.model).name) + " model" + kEllipsis;
+                status.primary = "loading the " + juce::String (atm::modelDisplayName (t.model)) + " model" + kEllipsis;
                 status.action = "cancel";
                 break;
 
@@ -491,8 +495,8 @@ void AudioToMidiEditor::refreshFromProcessor()
                 {
                     if (const auto smaller = AudioToMidiProcessor::smallerModel (t.model))
                     {
-                        status.primary = "not enough memory for the " + juce::String (atm::modelInfo (t.model).name) + " model";
-                        status.action = "use " + juce::String (atm::modelInfo (*smaller).name);
+                        status.primary = "not enough memory for the " + juce::String (atm::modelDisplayName (t.model)) + " model";
+                        status.action = "use " + juce::String (atm::modelDisplayName (*smaller));
                     }
                     else
                     {
@@ -520,12 +524,12 @@ void AudioToMidiEditor::showModelMenu()
     const auto preferred = atm::preferredModel();
     const auto busy = downloader.busySize();
 
-    juce::PopupMenu menu;
+    GlassMenu::Items items;
 
     for (const auto size : atm::kAllModelSizes)
     {
         const auto& info = atm::modelInfo (size);
-        juce::String text = info.name;
+        juce::String text = atm::modelDisplayName (size);
 
         if (atm::isModelInstalled (size))
             text += kDot + info.sizeLabel;
@@ -534,17 +538,16 @@ void AudioToMidiEditor::showModelMenu()
         else
             text += kDot + "download " + info.sizeLabel;
 
-        menu.addItem (1 + (int) size, text, busy != size, size == preferred);
+        items.push_back ({ 1 + (int) size, text, busy != size, size == preferred });
     }
 
-    menu.addSeparator();
+    items.push_back (GlassMenu::Item::separator());
     if (busy.has_value())
-        menu.addItem (10, "cancel download");
-    menu.addItem (11, "open models folder");
+        items.push_back ({ 10, "cancel download" });
+    items.push_back ({ 11, "open models folder" });
 
     juce::Component::SafePointer<AudioToMidiEditor> safeThis (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (topBar.getModelControl()),
-                        [safeThis] (int result)
+    menu.showBelow (topBar.getModelControl(), std::move (items), [safeThis] (int result)
     {
         if (safeThis == nullptr || result == 0)
             return;
@@ -561,7 +564,7 @@ void AudioToMidiEditor::showModelMenu()
         }
 
         safeThis->refreshFromProcessor();
-    });
+    }, true);
 }
 
 //==============================================================================

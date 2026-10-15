@@ -4,6 +4,7 @@
 #include "AudioFlowerLookAndFeel.h"
 #include "BinaryData.h"
 #include "Canvas.h"
+#include "GlassMenu.h"
 #include "GuideOverlay.h"
 #include "PluginProcessor.h"
 #include "Engine/MidiExport.h"
@@ -97,6 +98,7 @@ private:
     TopBar topBar;
     Canvas canvas;
     GuideOverlay guide;
+    GlassMenu menu;   // last: above everything, the guide included
 
     SizeMemoryConstrainer sizeConstrainer;
 
