@@ -25,6 +25,13 @@ public:
     std::function<double (const juce::String&)> parse;
     std::function<void (double)> onValueChanged;
 
+    /** A readout only: no drag, no typing (a recording's tempo is the host's). */
+    void setDraggable (bool shouldDrag)
+    {
+        setInterceptsMouseClicks (shouldDrag, shouldDrag);
+        setMouseCursor (shouldDrag ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+    }
+
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;

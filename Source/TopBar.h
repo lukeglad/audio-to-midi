@@ -30,8 +30,13 @@ public:
     /** The model control's text, e.g. "medium" or "medium · 43%". */
     void setModelLabel (const juce::String&);
 
-    /** The tempo and quantize groups. `hasTempo` false hides both. */
-    void setTempo (bool hasTempo, double bpm);
+    /** The tempo readout. `hasTempo` false hides it; `editable` false makes
+        it a plain readout (a recording's tempo is the host's). */
+    void setTempo (bool hasTempo, double bpm, bool editable = true);
+
+    /** Shown in copper in place of the file readout while non-empty:
+        "recording · from bar 9 · 0:04". */
+    void setLiveText (const juce::String&);
 
     /** The preview mix: shown with a file loaded. */
     void setMix (bool hasFile, float mix01);
@@ -55,7 +60,7 @@ private:
         int getIdealWidth() const;
     };
 
-    juce::String fileName;
+    juce::String fileName, liveText;
     double lengthSeconds = 0.0;
     MenuButton modelButton;
 

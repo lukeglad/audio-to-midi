@@ -3,9 +3,21 @@
 
 //==============================================================================
 AudioToMidiProcessor::AudioToMidiProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+    : AudioProcessor (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
     downloader->addChangeListener (this);
+
+    // A finished recording arrives on the recorder's thread and hops here.
+    recorder.onFinished = [weakThis = juce::WeakReference<AudioToMidiProcessor> (this)] (atm::Recorder::Result result)
+    {
+        auto shared = std::make_shared<atm::Recorder::Result> (std::move (result));
+        juce::MessageManager::callAsync ([weakThis, shared]
+        {
+            if (auto* self = weakThis.get())
+                self->finishRecording (shared);
+        });
+    };
 
     // The preview plays through the soundfont once it has loaded (the first
     // instance in the process starts the load). Listen first, then look: a
@@ -31,26 +43,132 @@ AudioToMidiProcessor::~AudioToMidiProcessor()
 void AudioToMidiProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     preview.prepare (sampleRate, samplesPerBlock);
+    recorder.prepare (sampleRate, samplesPerBlock);
+    previewBuffer.setSize (2, juce::jmax (1, samplesPerBlock));
 }
 
 bool AudioToMidiProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
+    // An effect: the input passes straight through, so in and out match. No
+    // input at all is fine too (the standalone without an input device).
+    const auto in = layouts.getMainInputChannelSet();
     const auto out = layouts.getMainOutputChannelSet();
-    return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
+    const bool outOk = out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
+    return outOk && (in == out || in.isDisabled());
 }
 
 void AudioToMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // For MIDI export: notes convert to ticks at the host's tempo, so a
-    // dragged clip lines up with the audio in real time.
+    const int numSamples = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
+
+    // Output channels beyond the input hold whatever the host left there.
+    for (int ch = getTotalNumInputChannels(); ch < numChannels; ++ch)
+        buffer.clear (ch, 0, numSamples);
+
+    // The host's position: what a recording lines up with, and the tempo
+    // the MIDI export of a dropped file is written at.
+    atm::HostPosition host;
     if (auto* playHead = getPlayHead())
         if (const auto position = playHead->getPosition())
+        {
+            host.playing = position->getIsPlaying();
+            if (const auto ppq = position->getPpqPosition())
+            {
+                host.hasTransport = true;
+                host.ppq = *ppq;
+            }
             if (const auto bpm = position->getBpm(); bpm.hasValue() && *bpm > 0.0)
+            {
+                host.bpm = *bpm;
                 hostBpm.store (*bpm, std::memory_order_relaxed);
+            }
+            if (const auto signature = position->getTimeSignature())
+            {
+                host.timeSigNumerator = juce::jmax (1, signature->numerator);
+                host.timeSigDenominator = juce::jmax (1, signature->denominator);
+            }
+            const double quartersPerBar = host.timeSigNumerator * 4.0 / host.timeSigDenominator;
+            if (const auto barStart = position->getPpqPositionOfLastBarStart())
+                host.barStartPpq = *barStart;
+            else
+                host.barStartPpq = std::floor (host.ppq / quartersPerBar) * quartersPerBar;
+        }
 
-    preview.render (buffer);
+    // The input passes through untouched, and is what gets recorded.
+    recorder.process (buffer, host);
+
+    // The preview on top, only while it has something to play.
+    if (previewBuffer.getNumChannels() >= numChannels && previewBuffer.getNumSamples() >= numSamples && numChannels > 0)
+    {
+        juce::AudioBuffer<float> view (previewBuffer.getArrayOfWritePointers(), numChannels, numSamples);
+        if (preview.render (view))
+            for (int ch = 0; ch < numChannels; ++ch)
+                buffer.addFrom (ch, 0, view, ch, 0, numSamples);
+    }
+}
+
+//==============================================================================
+void AudioToMidiProcessor::toggleRecord()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    switch (recorder.getPhase())
+    {
+        case atm::Recorder::Phase::idle:      recorder.setArmed (true);  break;
+        case atm::Recorder::Phase::armed:     recorder.setArmed (false); break;
+        case atm::Recorder::Phase::recording: recorder.stop();           break;
+        case atm::Recorder::Phase::finishing: break;
+    }
+
+    sendChangeMessage();
+}
+
+void AudioToMidiProcessor::pollRecording()
+{
+    // Half a second without a block from a host with a transport: it has
+    // stopped calling, so the recording ends here instead.
+    if (recorder.getPhase() == atm::Recorder::Phase::recording && recorder.hasTransport()
+        && juce::Time::getMillisecondCounter() - recorder.getLastBlockMs() > 500)
+        recorder.stop();
+}
+
+void AudioToMidiProcessor::finishRecording (std::shared_ptr<atm::Recorder::Result> result)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (result->silent)
+    {
+        loadError = "no audio reached the plugin\ncheck what's playing into it";
+        sendChangeMessage();
+        return;
+    }
+
+    // From here it is a drop: the recording lands through the same path a
+    // file does (waveform, state bytes, then the transcription).
+    const int generation = ++loadGeneration;
+    pendingRestore.reset();
+    loadingFileName = kRecordingName;
+    loadError.clear();
+    sendChangeMessage();
+
+    juce::WeakReference<AudioToMidiProcessor> weakThis (this);
+
+    loaderPool.addJob ([this, weakThis, result, generation]
+    {
+        auto decoded = sourceFromRecording (std::move (result->samples), result->sampleRate, result->host, [this, generation]
+        {
+            return loadGeneration.load() != generation;
+        });
+
+        juce::MessageManager::callAsync ([weakThis, generation, loaded = std::move (decoded)]
+        {
+            if (auto* self = weakThis.get())
+                self->finishLoad (generation, loaded);
+        });
+    });
 }
 
 //==============================================================================
@@ -66,7 +184,7 @@ juce::AudioProcessorEditor* AudioToMidiProcessor::createEditor()
 
 namespace
 {
-    constexpr int kStateVersion = 2;
+    constexpr int kStateVersion = 3;   // 3: recordings carry their host timing
 
     // Notes packed as fixed records, so a song's thousands of notes don't
     // become thousands of XML nodes.
@@ -122,6 +240,14 @@ void AudioToMidiProcessor::getStateInformation (juce::MemoryBlock& destData)
         audio.setProperty ("name", source->fileName, nullptr);
         audio.setProperty ("extension", stateAudioExtension, nullptr);
         audio.setProperty ("bytes", juce::var (*stateAudio), nullptr);
+        if (const auto& host = source->host)
+        {
+            audio.setProperty ("hostBpm", host->bpm, nullptr);
+            audio.setProperty ("hostPpq", host->ppqAtStart, nullptr);
+            audio.setProperty ("hostBarStart", host->barStartPpq, nullptr);
+            audio.setProperty ("hostQuartersPerBar", host->quartersPerBar, nullptr);
+            audio.setProperty ("hostStartBar", host->startBar, nullptr);
+        }
         state.appendChild (audio, nullptr);
 
         juce::ValueTree notes ("notes");
@@ -138,6 +264,8 @@ void AudioToMidiProcessor::getStateInformation (juce::MemoryBlock& destData)
         t.setProperty ("beatsPerBar", tempo.detected.beatsPerBar, nullptr);
         t.setProperty ("downbeat", tempo.detected.downbeat, nullptr);
         t.setProperty ("confidence", (double) tempo.detected.confidence, nullptr);
+        t.setProperty ("firstBarNumber", tempo.detected.firstBarNumber, nullptr);
+        t.setProperty ("fromHost", tempo.fromHost, nullptr);
         state.appendChild (t, nullptr);
     }
 
@@ -215,6 +343,19 @@ void AudioToMidiProcessor::setStateInformation (const void* data, int sizeInByte
         restore.tempo.detected.beatsPerBar = juce::jmax (1, (int) t.getProperty ("beatsPerBar", 4));
         restore.tempo.detected.downbeat = t.getProperty ("downbeat", 0);
         restore.tempo.detected.confidence = (float) (double) t.getProperty ("confidence", 0.0);
+        restore.tempo.detected.firstBarNumber = t.getProperty ("firstBarNumber", 1);
+        restore.tempo.fromHost = t.getProperty ("fromHost", false);
+    }
+
+    if (audio.hasProperty ("hostPpq"))
+    {
+        atm::HostTiming host;
+        host.bpm = audio.getProperty ("hostBpm", 120.0);
+        host.ppqAtStart = audio.getProperty ("hostPpq", 0.0);
+        host.barStartPpq = audio.getProperty ("hostBarStart", 0.0);
+        host.quartersPerBar = audio.getProperty ("hostQuartersPerBar", 4.0);
+        host.startBar = audio.getProperty ("hostStartBar", 1);
+        restore.host = host;
     }
 
     if (const auto p = state.getChildWithName ("preview"); p.isValid())
@@ -244,12 +385,14 @@ void AudioToMidiProcessor::setStateInformation (const void* data, int sizeInByte
     const int generation = pendingRestore->generation;
     juce::WeakReference<AudioToMidiProcessor> weakThis (this);
 
-    loaderPool.addJob ([this, weakThis, bytes, extension, name, generation]
+    const auto host = pendingRestore->host;
+
+    loaderPool.addJob ([this, weakThis, bytes, extension, name, generation, host]
     {
         auto decoded = decodeAudioData (bytes, extension, name, [this, generation]
         {
             return loadGeneration.load() != generation;
-        });
+        }, host);
 
         juce::MessageManager::callAsync ([weakThis, generation, result = std::move (decoded)]
         {
@@ -369,6 +512,15 @@ void AudioToMidiProcessor::startTranscription()
 
     tempo = {};   // a new run gets a fresh tempo; cleanup settings carry over
 
+    // A recording from a host already knows its grid: the host's, fixed.
+    if (source != nullptr && source->host.has_value())
+    {
+        tempo.fromHost = true;
+        tempo.hasEstimate = true;
+        tempo.detected = atm::gridFor (*source->host);
+        tempo.bpm = tempo.alignedBpm = tempo.detected.bpm;
+    }
+
     // Mute and solo belong to a transcription's layers: a new run starts with
     // every layer audible. (Otherwise a layer muted on the last file could
     // stay muted on a one-instrument file, where there's no strip to undo it.)
@@ -425,6 +577,14 @@ void AudioToMidiProcessor::startTranscription()
         {
             if (auto* self = weakThis.get())
                 self->onJobNotes (generation, newNotes, finalizedThrough);
+        });
+    };
+    job->onNotesRevised = [weakThis, generation] (std::vector<msl::Note> notes)
+    {
+        juce::MessageManager::callAsync ([weakThis, generation, notes]
+        {
+            if (auto* self = weakThis.get())
+                self->onJobNotesRevised (generation, notes);
         });
     };
     job->onLoaded = [weakThis, generation] (juce::String device)
@@ -564,7 +724,7 @@ void AudioToMidiProcessor::onJobProgress (int generation, atm::Phase phase, floa
 
 void AudioToMidiProcessor::onJobTempo (int generation, atm::TempoEstimate estimate)
 {
-    if (generation != jobGeneration)
+    if (generation != jobGeneration || tempo.fromHost)
         return;
 
     tempo.detected = estimate;
@@ -615,6 +775,9 @@ void AudioToMidiProcessor::setBpm (double bpm)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
+    if (tempo.fromHost)
+        return;   // the host's tempo is the host's to change
+
     bpm = juce::jlimit (20.0, 400.0, bpm);
     auto& d = tempo.detected;
     const double aligned = tempo.alignedBpm > 0.0 ? tempo.alignedBpm : tempo.bpm;
@@ -664,6 +827,15 @@ void AudioToMidiProcessor::onJobLoaded (int generation, juce::String device)
 
     transcription.device = device;
     sendChangeMessage();
+}
+
+void AudioToMidiProcessor::onJobNotesRevised (int generation, std::vector<msl::Note> notes)
+{
+    if (generation != jobGeneration || ! transcription.isRunning())
+        return;
+
+    transcription.notes = std::move (notes);
+    notesChanged();
 }
 
 void AudioToMidiProcessor::onJobFinished (int generation, atm::Outcome outcome, atm::Failure failure)

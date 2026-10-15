@@ -61,6 +61,8 @@ Canvas::Canvas()
 
     playButton.onClick = [this] { if (onPlayClicked) onPlayClicked(); };
     addChildComponent (playButton);
+    recordButton.onClick = [this] { if (onRecordClicked) onRecordClicked(); };
+    addAndMakeVisible (recordButton);
 
     quantizeLabel.onAmountChanged = [this] (double v) { quantizeFader.setValue (v); if (onQuantizeChanged) onQuantizeChanged (v); };
     quantizeLabel.onGridChanged   = [this] (atm::Grid g) { if (onGridChanged) onGridChanged (g); };
@@ -103,6 +105,22 @@ void Canvas::setSource (std::shared_ptr<const SourceAudio> newSource)
 void Canvas::setPlaying (bool playing)
 {
     playButton.setPlaying (playing);
+}
+
+void Canvas::setRecordState (RecordButton::State state)
+{
+    recordButton.setState (state);
+}
+
+void Canvas::setLiveRecording (std::vector<float> peaks, double secondsPerPeak, double seconds)
+{
+    if (peaks.empty() && livePeaks.empty())
+        return;
+
+    livePeaks = std::move (peaks);
+    livePeakSeconds = secondsPerPeak;
+    liveSeconds = seconds;
+    repaint (bandArea());
 }
 
 void Canvas::setLoadStatus (const juce::String& loading, const juce::String& error)
@@ -399,8 +417,10 @@ juce::Rectangle<float> Canvas::noteBounds (const atm::MidiNote& note) const
 //==============================================================================
 void Canvas::resized()
 {
-    // Play, alone in the band's corner above the keys, centred in it.
-    playButton.setBounds (juce::Rectangle<int> (0, 0, kKeysW + kTimeInset, kBandH).withSizeKeepingCentre (40, 40));
+    // Play and record stacked in the band's corner above the keys.
+    const auto corner = juce::Rectangle<int> (0, 0, kKeysW + kTimeInset, kBandH).withSizeKeepingCentre (36, 36);
+    playButton.setBounds (corner.translated (0, -19));
+    recordButton.setBounds (corner.translated (0, 19));
 
     layoutChips();
     layoutActionChip();
@@ -544,7 +564,10 @@ void Canvas::paintScene (juce::Graphics& g)
     paintGrid (g);
     paintNotes (g);
     paintKeys (g);
-    paintWaveform (g);
+    if (! livePeaks.empty())
+        paintLiveWaveform (g);
+    else
+        paintWaveform (g);
     paintRuler (g);
 
     // Section dividers.
@@ -639,6 +662,47 @@ void Canvas::paintWaveform (juce::Graphics& g) const
     // Brighter than the old under-the-notes ghost: the band is its own space now.
     g.setColour (LnF::ink().withAlpha (0.28f));
     g.fillPath (outline);
+}
+
+void Canvas::paintLiveWaveform (juce::Graphics& g) const
+{
+    // Copper, growing left to right: the first 20 s fill the band, after
+    // which it compresses to keep the whole recording in view.
+    const auto band = bandArea().withTrimmedLeft (kKeysW + kTimeInset).withTrimmedRight (kTimeInset)
+                                .reduced (0, kWaveInsetY).toFloat();
+    const int numColumns = juce::jmax (1, juce::roundToInt (band.getWidth()));
+    if (band.isEmpty())
+        return;
+
+    const double window = juce::jmax (20.0, liveSeconds);
+    const double columnSeconds = window / numColumns;
+
+    float loudest = 0.0f;
+    for (const float p : livePeaks)
+        loudest = juce::jmax (loudest, p);
+    const float gain = 1.0f / juce::jmax (0.05f, loudest);
+    const float centreY = band.getCentreY(), halfH = band.getHeight() * 0.5f;
+
+    g.setColour (LnF::accent().withAlpha (0.35f));
+    for (int c = 0; c < numColumns; ++c)
+    {
+        const int from = (int) (c * columnSeconds / livePeakSeconds);
+        const int to = juce::jmax (from + 1, (int) ((c + 1) * columnSeconds / livePeakSeconds));
+        if (from >= (int) livePeaks.size())
+            break;
+
+        float peak = 0.0f;
+        for (int i = from; i < juce::jmin (to, (int) livePeaks.size()); ++i)
+            peak = juce::jmax (peak, livePeaks[(size_t) i]);
+
+        const float h = juce::jmax (0.5f, peak * gain * halfH);
+        const float x = band.getX() + (float) c + 0.5f;
+        g.drawLine (x, centreY - h, x, centreY + h * 0.92f, 1.0f);
+    }
+
+    const float headX = band.getX() + (float) (liveSeconds / window) * band.getWidth();
+    g.setColour (LnF::accent().withAlpha (0.9f));
+    g.drawLine (headX, band.getY() - 2.0f, headX, band.getBottom() + 2.0f, 1.0f);
 }
 
 void Canvas::paintRuler (juce::Graphics& g) const
@@ -759,7 +823,7 @@ void Canvas::paintGrid (juce::Graphics& g) const
 
         // Bar 1 is the first downbeat; anything before it is a pickup and
         // goes unnumbered.
-        const int barNumber = fromDownbeat / grid->beatsPerBar + 1;
+        const int barNumber = fromDownbeat / grid->beatsPerBar + grid->firstBarNumber;
         // ...and skips the stretch under the quantize label.
         const bool underLabel = quantizeLabel.isVisible() && x + 20.0f > (float) quantizeLabel.getX() - 4.0f
                              && x < (float) quantizeLabel.getRight() + 4.0f;
@@ -920,7 +984,7 @@ void Canvas::paintMessage (juce::Graphics& g) const
 {
     juce::String primary, secondary;
     float primaryAlpha = kAlphaResting;
-    bool hasAction = false;
+    bool hasAction = false, accent = false;
 
     if (loadingFileName.isNotEmpty())
     {
@@ -942,11 +1006,12 @@ void Canvas::paintMessage (juce::Graphics& g) const
         primary = status.primary;
         secondary = status.secondary;
         primaryAlpha = status.primaryAlpha;
+        accent = status.accent;
         hasAction = status.action.isNotEmpty();
     }
-    else if (source == nullptr)
+    else if (source == nullptr && livePeaks.empty())
     {
-        primary = "drop an audio file";
+        primary = "drop an audio file, or press record";
         secondary = supportedFormatsLabel();
     }
 
@@ -970,7 +1035,7 @@ void Canvas::paintMessage (juce::Graphics& g) const
     }
 
     g.setFont (LnF::uiFont (14.0f));
-    g.setColour (LnF::ink().withAlpha (primaryAlpha));
+    g.setColour (accent ? LnF::accent() : LnF::ink().withAlpha (primaryAlpha));
     g.drawFittedText (primary, block.removeFromTop (kPrimaryH), juce::Justification::centred, 1, 1.0f);
 
     if (secondary.isNotEmpty())

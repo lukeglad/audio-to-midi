@@ -22,6 +22,9 @@ int ExportTiming::leadInBeats() const noexcept
     if (! conform)
         return 0;
 
+    if (fixedLeadInBeats.has_value())
+        return juce::jmax (0, *fixedLeadInBeats);
+
     // Enough whole beats that the earliest note (at beat beatAt(earliestOnset),
     // negative when it precedes beat 0) lands at or after tick 0, then more
     // until the downbeat sits on a bar line. A note a few ms before a beat is

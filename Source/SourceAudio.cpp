@@ -163,7 +163,8 @@ DecodeResult decodeAudioFile (const juce::File& file, const std::function<bool()
 }
 
 DecodeResult decodeAudioData (std::shared_ptr<const juce::MemoryBlock> bytes, const juce::String& extension,
-                              const juce::String& fileName, const std::function<bool()>& shouldAbort)
+                              const juce::String& fileName, const std::function<bool()>& shouldAbort,
+                              std::optional<atm::HostTiming> host)
 {
     if (bytes == nullptr || bytes->getSize() == 0)
         return fail ("the project holds no audio");
@@ -182,8 +183,37 @@ DecodeResult decodeAudioData (std::shared_ptr<const juce::MemoryBlock> bytes, co
     auto result = decodeWithReader (std::move (reader), fileName, shouldAbort);
     if (result.audio != nullptr)
     {
+        if (host.has_value())
+        {
+            // Stamped before the source is shared, so it stays immutable after.
+            auto stamped = std::make_shared<SourceAudio> (std::move (const_cast<SourceAudio&> (*result.audio)));
+            stamped->host = host;
+            result.audio = std::move (stamped);
+        }
         result.stateBytes = std::move (bytes);
         result.stateExtension = extension;
+    }
+    return result;
+}
+
+DecodeResult sourceFromRecording (juce::AudioBuffer<float> samples, double sampleRate,
+                                  std::optional<atm::HostTiming> host, const std::function<bool()>& shouldAbort)
+{
+    if (samples.getNumSamples() <= 0 || sampleRate <= 0.0)
+        return fail ("the recording is empty\ntry recording again");
+
+    auto audio = std::make_shared<SourceAudio>();
+    audio->fileName = kRecordingName;
+    audio->sampleRate = sampleRate;
+    audio->samples = std::move (samples);
+    audio->host = host;
+    audio->waveform = summarise (audio->samples);
+
+    DecodeResult result { audio, {}, nullptr, {} };
+    if (! shouldAbort())
+    {
+        result.stateBytes = encodeFlac (*audio);
+        result.stateExtension = "flac";
     }
     return result;
 }

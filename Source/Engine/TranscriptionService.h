@@ -56,6 +56,11 @@ struct TranscriptionJob
         transcription is now complete. Each note arrives exactly once. */
     std::function<void (std::vector<msl::Note> newNotes, double finalizedThrough)> onNotes;
 
+    /** Once, after the last chunk: every note again, with its end held for
+        as long as the audio sounds at its pitch (see NoteEnds). Replaces
+        everything onNotes delivered. */
+    std::function<void (std::vector<msl::Note> notes)> onNotesRevised;
+
     /** Once the model has loaded: the backend it runs on ("metal" or "cpu"). */
     std::function<void (juce::String device)> onLoaded;
 

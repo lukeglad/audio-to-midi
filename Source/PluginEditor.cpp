@@ -45,6 +45,7 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     // The preview.
     auto& preview = processorRef.getPreview();
     canvas.onPlayClicked = [this, &preview] { preview.togglePlay(); refreshFromProcessor(); };
+    canvas.onRecordClicked = [this] { processorRef.toggleRecord(); refreshFromProcessor(); };
     topBar.onMixChanged = [&preview] (float mix) { preview.setMix (mix); };
     canvas.onSeek = [this, &preview] (double seconds) { preview.seek (seconds); refreshFromProcessor(); };
     canvas.isLayerMuted   = [&preview] (int layer) { return preview.isMuted (layer); };
@@ -192,8 +193,11 @@ void AudioToMidiEditor::timerCallback()
     // Download and transcription progress are polled, as is the playhead;
     // everything else arrives as a change message. The playhead wants a
     // smoother rate than the rest.
+    processorRef.pollRecording();
+
     const bool animating = processorRef.getPreview().isPlaying()
-                        || processorRef.getTranscription().phase == TranscriptionPhase::transcribing;
+                        || processorRef.getTranscription().phase == TranscriptionPhase::transcribing
+                        || processorRef.getRecorder().getPhase() != atm::Recorder::Phase::idle;
     if (getTimerInterval() != (animating ? 33 : 66))
         startTimer (animating ? 33 : 66);
 
@@ -209,8 +213,31 @@ void AudioToMidiEditor::refreshFromProcessor()
     canvas.setSource (source);
     canvas.setNotes (processorRef.getTranscriptionRun(), processorRef.getNotesVersion(), processorRef.getCleanNotes());
 
+    // Recording: the dot's state, the live waveform, and the top bar's
+    // running readout.
+    auto& recorder = processorRef.getRecorder();
+    const auto recPhase = recorder.getPhase();
+    const bool recording = recPhase == atm::Recorder::Phase::recording || recPhase == atm::Recorder::Phase::finishing;
+    canvas.setRecordState (recording ? RecordButton::State::recording
+                                     : recPhase == atm::Recorder::Phase::armed ? RecordButton::State::armed
+                                                                               : RecordButton::State::idle);
+    canvas.setLiveRecording (recording ? recorder.getLivePeaks() : std::vector<float>{},
+                             atm::Recorder::kPeakBucketSeconds, recorder.getSeconds());
+    {
+        juce::String live;
+        if (recording)
+        {
+            live = "recording";
+            if (const auto host = recorder.getHostTiming())
+                live += kDot + "from bar " + juce::String (host->startBar);
+            const int total = (int) recorder.getSeconds();
+            live += kDot + juce::String (total / 60) + ":" + juce::String (total % 60).paddedLeft ('0', 2);
+        }
+        topBar.setLiveText (live);
+    }
+
     const auto& tempo = processorRef.getTempo();
-    topBar.setTempo (tempo.hasEstimate && source != nullptr, tempo.bpm);
+    topBar.setTempo (tempo.hasEstimate && source != nullptr && ! recording, tempo.bpm, ! tempo.fromHost);
 
     canvas.setQuantize (processorRef.getCleanup().quantize, processorRef.getCleanup().grid, tempo.hasEstimate);
     canvas.setGridDivisions ((int) processorRef.getCleanup().grid);
@@ -223,7 +250,20 @@ void AudioToMidiEditor::refreshFromProcessor()
     canvas.setLoadStatus (processorRef.getLoadingFileName(), processorRef.getLoadError());
 
     if (source != nullptr)
-        topBar.setFile (source->fileName, source->getLengthSeconds());
+    {
+        // A recording from a host says which of its bars it covers.
+        juce::String name = source->fileName;
+        if (tempo.fromHost && tempo.hasEstimate)
+        {
+            const auto& g = tempo.detected;
+            const int startBar = g.firstBarNumber - (g.downbeat > 0 ? 1 : 0);
+            const double beatsPastDownbeat = g.beatAt (source->getLengthSeconds()) - g.downbeat;
+            const int endBar = beatsPastDownbeat >= 0.0 ? g.firstBarNumber + (int) std::floor (beatsPastDownbeat / g.beatsPerBar) : startBar;
+            name += kDot + (endBar > startBar ? "bars " + juce::String (startBar) + juce::String (juce::CharPointer_UTF8 ("\xE2\x80\x93")) + juce::String (endBar)
+                                              : "bar " + juce::String (startBar));
+        }
+        topBar.setFile (name, source->getLengthSeconds());
+    }
     else
         topBar.setFile ({}, 0.0);
 
@@ -240,6 +280,20 @@ void AudioToMidiEditor::refreshFromProcessor()
     // not audio is waiting for it; otherwise the transcription phase decides.
     Canvas::Status status;
     double progressTime = -1.0;
+
+    // Recording claims the band: ready, or quiet while it runs (the top bar
+    // carries the readout), or the one thing worth saying mid-recording.
+    std::optional<Canvas::Status> recordingStatus;
+    if (recPhase == atm::Recorder::Phase::armed && recorder.hasTransport())
+    {
+        recordingStatus = Canvas::Status { "ready to record", "press play in your DAW", 1.0f, true, {} };
+    }
+    else if (recording)
+    {
+        recordingStatus = Canvas::Status {};
+        if (recorder.getSeconds() >= 2.0 && recorder.getPeakSoFar() < atm::Recorder::kSilenceThreshold)
+            recordingStatus = Canvas::Status { "no audio is reaching the plugin", "check what's playing into it", 0.75f, false, {} };
+    }
 
     using DPhase = atm::ModelDownloader::Phase;
     const bool audioWaiting = source != nullptr && t.phase == TranscriptionPhase::waitingForModel;
@@ -428,7 +482,7 @@ void AudioToMidiEditor::refreshFromProcessor()
         }
     }
 
-    canvas.setStatus (status);
+    canvas.setStatus (recordingStatus.value_or (status));
     canvas.setProgressTime (progressTime);
 }
 
@@ -491,6 +545,8 @@ juce::File AudioToMidiEditor::writeLayerMidi (int layerKey, const juce::File& de
     timing.conform = tempo.hasEstimate;   // always, once a tempo exists
     timing.tempo   = tempo.effective();
     timing.earliestOnset = atm::earliestOnsetOf (processorRef.getCleanNotes());
+    if (tempo.fromHost)
+        timing.fixedLeadInBeats = atm::leadInBeatsFor (timing.tempo);   // the clip starts at the bar it was recorded from
 
     const auto midi = atm::buildLayerMidi (processorRef.getCleanNotes(), layerKey, timing);
     return atm::writeMidiFile (midi, destination) ? destination : juce::File();

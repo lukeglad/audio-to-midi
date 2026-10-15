@@ -4,6 +4,7 @@
 #include "Engine/Cleanup.h"
 #include "Engine/ModelDownloader.h"
 #include "Engine/Preview.h"
+#include "Engine/Recorder.h"
 #include "Engine/SoundFont.h"
 #include "Engine/TranscriptionService.h"
 #include "SourceAudio.h"
@@ -51,6 +52,7 @@ struct TempoState
     double bpm = 120.0;          // what the user sees; follows `detected` until edited
     bool userEdited = false;
     double alignedBpm = 0.0;     // the tempo the downbeat was last placed for (see setBpm)
+    bool fromHost = false;       // a recording: the host's grid, not detected, and not editable
 
     /** The detected grid with the user's tempo applied. */
     atm::TempoEstimate effective() const noexcept
@@ -89,7 +91,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override  { return true; }
+    bool acceptsMidi() const override  { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -120,6 +122,19 @@ public:
 
     const juce::String& getLoadingFileName() const noexcept { return loadingFileName; }
     const juce::String& getLoadError() const noexcept { return loadError; }
+
+    //==========================================================================
+    // Recording the input (the effect sits on a mixer track). Arm with the
+    // record button; it records while the host plays and lands as a new
+    // source when the host stops, on the host's grid.
+
+    /** The record button: arms, disarms, or ends a recording in progress. */
+    void toggleRecord();
+    atm::Recorder& getRecorder() noexcept { return recorder; }
+
+    /** Polled by the editor: a host that stops calling processBlock when its
+        transport stops would otherwise leave a recording open. */
+    void pollRecording();
 
     //==========================================================================
     // Transcription and models.
@@ -191,6 +206,7 @@ public:
 
 private:
     void finishLoad (int generation, DecodeResult result);
+    void finishRecording (std::shared_ptr<atm::Recorder::Result>);
 
     // A saved session being restored: decoding its audio takes a moment in
     // the background, and everything else waits for it so a half-restored
@@ -204,6 +220,7 @@ private:
         atm::CleanupSettings cleanup;
         float mix = 0.5f;
         std::vector<int> muted, soloed;
+        std::optional<atm::HostTiming> host;
     };
     std::optional<PendingRestore> pendingRestore;
     void applyRestore (PendingRestore&&);
@@ -213,6 +230,7 @@ private:
     void onJobTempo (int generation, atm::TempoEstimate);
     void notesChanged();
     void onJobNotes (int generation, std::vector<msl::Note> newNotes, double finalizedThrough);
+    void onJobNotesRevised (int generation, std::vector<msl::Note> notes);
     void onJobLoaded (int generation, juce::String device);
     void onJobFinished (int generation, atm::Outcome, atm::Failure);
 
@@ -225,6 +243,8 @@ private:
     TranscriptionState transcription;
     TempoState tempo;
     atm::Preview preview;
+    juce::AudioBuffer<float> previewBuffer;   // the preview renders here, then adds onto the input
+    atm::Recorder recorder;
     atm::CleanupSettings cleanup;
     int notesVersion = 0;
     mutable std::vector<atm::MidiNote> cleanNotes;

@@ -70,7 +70,11 @@ namespace atm
         // Audio thread.
 
         void prepare (double sampleRate, int maxBlockSize);
-        void render (juce::AudioBuffer<float>&);
+
+        /** Fills the buffer. @return false when there was nothing to play
+            (the buffer is then silent), so a host that adds this on top of
+            its own audio can skip the add. */
+        bool render (juce::AudioBuffer<float>&);
 
     private:
         struct Snapshot

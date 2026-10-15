@@ -245,7 +245,7 @@ void Preview::beginDeclick (double fromSeconds)
     fadeOutRemaining = fadeLength;
 }
 
-void Preview::render (juce::AudioBuffer<float>& buffer)
+bool Preview::render (juce::AudioBuffer<float>& buffer)
 {
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
@@ -264,10 +264,10 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     }
 
     if (current == nullptr || numSamples <= 0)
-        return;
+        return false;
 
     if ((int) synthLeft.size() < numSamples)
-        return;   // prepare() wasn't called with a big enough block; stay silent rather than allocate
+        return false;   // prepare() wasn't called with a big enough block; stay silent rather than allocate
 
     const auto& snapshot = *current;
     const bool isPlaying = playing.load();
@@ -319,7 +319,7 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     if (! isPlaying && fadeOutRemaining <= 0 && synth.isSilent() && simpleSynth.isSilent())
     {
         wasPlaying = false;
-        return;
+        return false;
     }
 
     const double startSeconds = positionSeconds.load();
@@ -464,7 +464,7 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
     wasPlaying = isPlaying;
 
     if (! isPlaying)
-        return;
+        return true;
 
     positionSeconds.store (endSeconds);
     lastEndSeconds = endSeconds;
@@ -475,6 +475,8 @@ void Preview::render (juce::AudioBuffer<float>& buffer)
         positionSeconds.store (playStartSeconds.load());   // back to where this play began
         ++seekGeneration;
     }
+
+    return true;
 }
 
 } // namespace atm

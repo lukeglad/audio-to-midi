@@ -103,9 +103,10 @@ void TopBar::setModelLabel (const juce::String& label)
     modelButton.repaint();
 }
 
-void TopBar::setTempo (bool has, double bpm)
+void TopBar::setTempo (bool has, double bpm, bool editable)
 {
     hasTempo = has;
+    bpmValue.setDraggable (editable);
 
     for (auto* c : std::initializer_list<juce::Component*> { &bpmValue })
         c->setVisible (has);
@@ -146,8 +147,25 @@ void TopBar::resized()
     bpmValue.setBounds (left.removeFromLeft (bpmW));
 }
 
+void TopBar::setLiveText (const juce::String& text)
+{
+    if (text == liveText)
+        return;
+
+    liveText = text;
+    repaint();
+}
+
 void TopBar::paint (juce::Graphics& g)
 {
+    if (liveText.isNotEmpty())
+    {
+        g.setFont (LnF::uiFont (kTextSize));
+        g.setColour (LnF::accent());
+        g.drawText (liveText, getLocalBounds(), juce::Justification::centred, false);
+        return;
+    }
+
     if (fileName.isEmpty())
         return;
 

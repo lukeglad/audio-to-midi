@@ -11,6 +11,7 @@
 #include "LayerChip.h"
 #include "PlayButton.h"
 #include "QuantizeControl.h"
+#include "RecordButton.h"
 #include "SourceAudio.h"
 
 //==============================================================================
@@ -42,6 +43,7 @@ public:
     {
         juce::String primary, secondary;
         float primaryAlpha = 0.75f;
+        bool accent = false;   // the primary line in copper: something live (ready to record)
         juce::String action;   // chip text; empty = no chip
     };
 
@@ -93,6 +95,14 @@ public:
     /** The play / stop glyph in the band's corner, above the keys. */
     void setPlaying (bool);
     std::function<void()> onPlayClicked;
+
+    /** The record dot under it. */
+    void setRecordState (RecordButton::State);
+    std::function<void()> onRecordClicked;
+
+    /** A recording in progress: its peaks so far (one per `secondsPerPeak`)
+        drawn live in the band in place of the source. Empty: none. */
+    void setLiveRecording (std::vector<float> peaks, double secondsPerPeak, double seconds);
 
     /** Re-reads the preview state into the chips and the roll. */
     void refreshPreviewState();
@@ -177,6 +187,7 @@ private:
 
     void paintScene (juce::Graphics&);
     void paintWaveform (juce::Graphics&) const;
+    void paintLiveWaveform (juce::Graphics&) const;
     void paintRuler (juce::Graphics&) const;
     void paintRoll (juce::Graphics&) const;
     void paintGrid (juce::Graphics&) const;
@@ -218,6 +229,9 @@ private:
     std::vector<atm::MidiNote> notes;
     LayerStrip strip;
     PlayButton playButton;
+    RecordButton recordButton;
+    std::vector<float> livePeaks;
+    double livePeakSeconds = 0.02, liveSeconds = 0.0;
     QuantizeLabel quantizeLabel;
     QuantizeFader quantizeFader;
     std::vector<Layer> layers;                // ordered by key: GM family order, drums last

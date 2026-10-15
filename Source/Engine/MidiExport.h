@@ -6,6 +6,7 @@
 #include "Cleanup.h"
 #include "Tempo.h"
 
+#include <optional>
 #include <vector>
 
 namespace atm
@@ -44,6 +45,10 @@ namespace atm
         bool conform = false;
         TempoEstimate tempo;        // with the user's edits applied
         double earliestOnset = 0.0; // seconds; the first note of the whole transcription
+
+        // A recording: the clip starts at the host bar it was recorded
+        // from, whatever the first note is (see leadInBeatsFor).
+        std::optional<int> fixedLeadInBeats;
 
         /** Beats of lead-in before the grid's beat 0, when conforming. */
         int leadInBeats() const noexcept;

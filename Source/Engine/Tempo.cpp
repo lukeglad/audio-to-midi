@@ -291,4 +291,28 @@ TempoEstimate estimateTempo (std::span<const float> samples16k, std::span<const 
     return result;
 }
 
+TempoEstimate gridFor (const HostTiming& host) noexcept
+{
+    TempoEstimate grid;
+    grid.bpm = host.bpm > 0.0 ? host.bpm : 120.0;
+    grid.beatsPerBar = juce::jmax (1, (int) std::lround (host.quartersPerBar));
+    grid.confidence = 1.0f;
+
+    // The first whole quarter note at or after the first sample.
+    const double firstBeatPpq = std::ceil (host.ppqAtStart - 1.0e-6);
+    grid.firstBeat = (firstBeatPpq - host.ppqAtStart) * 60.0 / grid.bpm;
+
+    // How far into its bar that beat is; the next bar line is the first
+    // numbered bar, unless the beat is a bar line itself.
+    const int offset = (((int) std::lround (firstBeatPpq - host.barStartPpq) % grid.beatsPerBar) + grid.beatsPerBar) % grid.beatsPerBar;
+    grid.downbeat = (grid.beatsPerBar - offset) % grid.beatsPerBar;
+    grid.firstBarNumber = host.startBar + (offset > 0 ? 1 : 0);
+    return grid;
+}
+
+int leadInBeatsFor (const TempoEstimate& hostGrid) noexcept
+{
+    return (hostGrid.beatsPerBar - hostGrid.downbeat) % hostGrid.beatsPerBar;
+}
+
 } // namespace atm

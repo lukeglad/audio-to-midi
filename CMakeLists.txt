@@ -46,7 +46,9 @@ set (ENGINE_SOURCES
     Source/Engine/MidiExport.cpp
     Source/Engine/ModelDownloader.cpp
     Source/Engine/ModelFiles.cpp
+    Source/Engine/NoteEnds.cpp
     Source/Engine/Preview.cpp
+    Source/Engine/Recorder.cpp
     Source/Engine/Resampler.cpp
     Source/Engine/SimpleSynth.cpp
     Source/Engine/SoundFont.cpp
@@ -69,17 +71,19 @@ juce_add_plugin (AudioToMidi
     PLUGIN_MANUFACTURER_CODE    Lgld
     PLUGIN_CODE                 Atm1
 
-    # An instrument (FL's Channel Rack), not an effect: no audio input, and
-    # its only audio output will be the preview synth.
+    # An effect on a mixer track (decided 2026-10-14; it began as an
+    # instrument): the input passes through and can be recorded, and the
+    # preview plays on top. The standalone records from the input device.
     FORMATS                     AU VST3 Standalone
-    IS_SYNTH                    TRUE
-    NEEDS_MIDI_INPUT            TRUE
+    IS_SYNTH                    FALSE
+    NEEDS_MIDI_INPUT            FALSE
     NEEDS_MIDI_OUTPUT           FALSE
     IS_MIDI_EFFECT              FALSE
-    AU_MAIN_TYPE                kAudioUnitType_MusicDevice
-    VST3_CATEGORIES             Instrument
+    AU_MAIN_TYPE                kAudioUnitType_Effect
+    VST3_CATEGORIES             Fx Tools
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    MICROPHONE_PERMISSION_ENABLED FALSE
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT  "The standalone app records from your input device to transcribe it."
 
     COPY_PLUGIN_AFTER_BUILD     TRUE)
 

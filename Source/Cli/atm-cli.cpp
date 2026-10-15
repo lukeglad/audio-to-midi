@@ -21,6 +21,7 @@
 #include "Engine/ModelDownloader.h"
 #include "Engine/ModelFiles.h"
 #include "Engine/Preview.h"
+#include "Engine/Recorder.h"
 #include "Engine/Resampler.h"
 #include "Engine/SoundFont.h"
 #include "Engine/Tempo.h"
@@ -47,6 +48,7 @@ namespace
         print ("       atm-cli --scrub-check FILE   (seek every 50 ms while playing: no clicks at the jumps)");
         print ("       (the preview checks use the soundfont at " + atm::soundFontFile().getFullPathName() + " when it's there)");
         print ("       atm-cli --download-check     (downloads the small model twice into a scratch folder)");
+        print ("       atm-cli --record-check       (the recorder against a pretend host, no model needed)");
         return 2;
     }
 
@@ -513,6 +515,130 @@ namespace
     }
 }
 
+namespace
+{
+    /** The recorder against a pretend host: 48 kHz, 256-sample blocks,
+        playing from bar 9 beat 1.5 at 120 BPM. Silence for 0.6 s, a tone for
+        2 s, silence again, then the host stops. The recording must come
+        back trimmed, timed to the host's grid, and export from bar 9. Then
+        the same without a transport (the standalone), and a silent take. */
+    int recordCheck()
+    {
+        constexpr double rate = 48000.0;
+        constexpr int block = 256;
+        using Phase = atm::Recorder::Phase;
+
+        atm::Recorder recorder;
+        recorder.prepare (rate, block);
+
+        juce::WaitableEvent done;
+        std::optional<atm::Recorder::Result> result;
+        recorder.onFinished = [&] (atm::Recorder::Result r) { result = std::move (r); done.signal(); };
+
+        bool ok = true;
+        const auto report = [&] (const juce::String& name, bool passed, const juce::String& detail)
+        {
+            print (("record:   " + name).paddedRight (' ', 30) + detail + ": " + (passed ? "ok" : "WRONG"));
+            ok = ok && passed;
+        };
+
+        juce::AudioBuffer<float> in (2, block);
+        double angle = 0.0;
+        const auto fill = [&] (double t0, bool tone)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = t0 + i / rate;
+                const float v = tone && t >= 0.6 && t < 2.6 ? 0.5f * (float) std::sin (angle) : 0.0f;
+                angle += 2.0 * juce::MathConstants<double>::pi * 440.0 / rate;
+                in.setSample (0, i, v);
+                in.setSample (1, i, v);
+            }
+        };
+
+        // 1. Armed with the host stopped: nothing until play.
+        atm::HostPosition host;
+        host.hasTransport = true;
+        host.bpm = 120.0;
+        host.ppq = 32.5;
+        host.barStartPpq = 32.0;
+
+        recorder.setArmed (true);
+        for (int b = 0; b < 20; ++b) { fill (0.0, false); recorder.process (in, host); }
+        report ("waits for play", recorder.getPhase() == Phase::armed, "still armed after 20 stopped blocks");
+
+        // 2. Play for 3 s, then stop.
+        host.playing = true;
+        const int total = (int) (3.0 * rate / block);
+        for (int b = 0; b < total; ++b)
+        {
+            fill (b * block / rate, true);
+            recorder.process (in, host);
+            host.ppq += block / rate * host.bpm / 60.0;
+            if (b % 64 == 0)
+                juce::Thread::sleep (1);
+        }
+        report ("records on play", recorder.getPhase() == Phase::recording && recorder.getSeconds() > 2.9,
+                juce::String (recorder.getSeconds(), 2) + " s captured");
+
+        host.playing = false;
+        recorder.process (in, host);
+        const bool finished = done.wait (5000);
+        report ("ends on stop", finished && result.has_value() && ! result->silent && ! result->dropped,
+                finished ? (result->dropped ? "samples dropped" : "result delivered") : "no result within 5 s");
+        if (! finished || ! result.has_value())
+            return 1;
+
+        // 3. Trimmed to the tone, with 50 ms before and 200 ms after.
+        const double length = result->samples.getNumSamples() / rate;
+        report ("trims silence", std::abs (length - 2.25) < 0.02, juce::String (length, 3) + " s kept of 3.0");
+
+        // 4. The host position moved with the trim: 32.5 + 0.55 s at 2 beats/s.
+        const bool hostOk = result->host.has_value() && std::abs (result->host->ppqAtStart - 33.6) < 0.005
+                         && result->host->startBar == 9 && juce::exactlyEqual (result->host->barStartPpq, 32.0);
+        report ("host timing", hostOk, result->host ? "starts at ppq " + juce::String (result->host->ppqAtStart, 3) + " in bar "
+                                                      + juce::String (result->host->startBar) : "no host timing");
+
+        // 5. The grid: the first beat (ppq 34) 0.2 s in, bar 10 two beats later.
+        const auto grid = atm::gridFor (*result->host);
+        report ("grid", std::abs (grid.firstBeat - 0.2) < 0.005 && grid.downbeat == 2 && grid.firstBarNumber == 10 && grid.beatsPerBar == 4,
+                "first beat " + juce::String (grid.firstBeat, 3) + " s, downbeat " + juce::String (grid.downbeat)
+                    + ", first bar " + juce::String (grid.firstBarNumber));
+
+        // 6. Export: a note on that beat is bar 9's third beat, two beats from tick 0.
+        atm::ExportTiming timing;
+        timing.conform = true;
+        timing.tempo = grid;
+        timing.fixedLeadInBeats = atm::leadInBeatsFor (grid);
+        const double tick = atm::tickFor (0.2, timing);
+        report ("exports from bar 9", std::abs (tick - 2 * atm::kTicksPerQuarter) < 1.0,
+                "first-beat note at tick " + juce::String (tick, 0) + " (expected 1920)");
+
+        // 7. No transport: starts at once, ends on stop(), no host timing.
+        result.reset();
+        done.reset();
+        atm::HostPosition none;
+        recorder.setArmed (true);
+        for (int b = 0; b < 200; ++b) { fill (0.6 + b * block / rate, true); recorder.process (in, none); }
+        const bool started = recorder.getPhase() == Phase::recording;
+        recorder.stop();
+        const bool finished2 = done.wait (5000);
+        report ("no transport", started && finished2 && result.has_value() && ! result->host.has_value() && ! result->silent,
+                started ? "started at once, ended on stop" : "did not start");
+
+        // 8. A silent take says so rather than producing an empty source.
+        result.reset();
+        done.reset();
+        recorder.setArmed (true);
+        for (int b = 0; b < 100; ++b) { fill (0.0, false); recorder.process (in, none); }
+        recorder.stop();
+        const bool finished3 = done.wait (5000);
+        report ("silent take", finished3 && result.has_value() && result->silent, "reported as silent");
+
+        return ok ? 0 : 1;
+    }
+}
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // message manager, for the service's WeakReferences
@@ -525,6 +651,8 @@ int main (int argc, char* argv[])
         return velocityCheck();
     if (argc == 3 && juce::String (argv[1]) == "--scrub-check")
         return scrubCheck (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
+    if (argc == 2 && juce::String (argv[1]) == "--record-check")
+        return recordCheck();
     if (argc == 2 && juce::String (argv[1]) == "--download-check")
         return downloadCheck();
     if (argc == 3 && juce::String (argv[1]) == "--download-child")
@@ -628,6 +756,18 @@ int main (int argc, char* argv[])
     {
         notes.insert (notes.end(), newNotes.begin(), newNotes.end());
     };
+    int notesHeld = 0;
+    double longestHold = 0.0;
+    job->onNotesRevised = [&] (std::vector<msl::Note> revised)
+    {
+        for (size_t i = 0; i < juce::jmin (notes.size(), revised.size()); ++i)
+            if (revised[i].offset > notes[i].offset + 1.0e-6)
+            {
+                ++notesHeld;
+                longestHold = juce::jmax (longestHold, revised[i].offset - notes[i].offset);
+            }
+        notes = std::move (revised);
+    };
     job->onLoaded = [&] (juce::String d) { device = d; };
     job->onFinished = [&] (atm::Outcome o, atm::Failure, juce::String detail)
     {
@@ -649,6 +789,7 @@ int main (int argc, char* argv[])
     print (juce::String::formatted ("transcribe: %.0f ms (%.2fx real time)", phaseMs[atm::Phase::transcribing],
                                     audio.getLengthSeconds() * 1000.0 / juce::jmax (1.0, phaseMs[atm::Phase::transcribing])));
     print ("device:   " + device);
+    print (juce::String::formatted ("ends:     %d note(s) held past the model's end from the audio, longest by %.2f s", notesHeld, longestHold));
 
     if (outcome != atm::Outcome::finished)
     {

@@ -1,4 +1,5 @@
 #include "TranscriptionService.h"
+#include "NoteEnds.h"
 #include "Resampler.h"
 
 namespace atm
@@ -135,6 +136,17 @@ void TranscriptionService::runJob (TranscriptionJob& job)
     if (job.cancelled)
         return finish (Outcome::cancelled);
 
+    // The model never gives an onset to a note that is already sounding at
+    // its first sample: a loop cut on its transient, or a recording that
+    // began a few ms into a chord, lost its first chord entirely (seen
+    // 2026-10-15 on a felt-piano loop). So it hears half a second of
+    // silence first, and everything it reports is moved back by that. The
+    // tempo estimate keeps the real audio.
+    constexpr double kLeadInSeconds = 0.5;
+    const size_t leadIn = (size_t) (kLeadInSeconds * msl::Transcriber::SAMPLE_RATE);
+    std::vector<float> modelInput (leadIn, 0.0f);
+    modelInput.insert (modelInput.end(), samples.begin(), samples.end());
+
     // A first tempo from the audio's opening minute: cheap, and it puts the
     // beat grid on screen before the model has even loaded.
     if (job.onTempo)
@@ -187,17 +199,26 @@ void TranscriptionService::runJob (TranscriptionJob& job)
 
     const msl::NoteCallback callback = [&] (const msl::TranscriptionUpdate& update)
     {
-        allNotes.insert (allNotes.end(), update.new_notes.begin(), update.new_notes.end());
+        // Back onto the audio's own timeline (see the lead-in above). A note
+        // the model put inside the silence is the one that began at 0.
+        std::vector<msl::Note> newNotes (update.new_notes.begin(), update.new_notes.end());
+        for (auto& note : newNotes)
+        {
+            note.onset = juce::jmax (0.0, note.onset - kLeadInSeconds);
+            note.offset = juce::jmax (note.onset + msl::MINIMUM_NOTE_DURATION_SECONDS, note.offset - kLeadInSeconds);
+        }
+        const double finalizedThrough = juce::jmax (0.0, update.finalized_through - kLeadInSeconds);
 
-        if (job.onNotes && (! update.new_notes.empty() || update.finalized_through > 0.0))
-            job.onNotes (std::vector<msl::Note> (update.new_notes.begin(), update.new_notes.end()),
-                         update.finalized_through);
+        allNotes.insert (allNotes.end(), newNotes.begin(), newNotes.end());
+
+        if (job.onNotes && (! newNotes.empty() || finalizedThrough > 0.0))
+            job.onNotes (std::move (newNotes), finalizedThrough);
 
         progress (Phase::transcribing, update.progress);
         return ! job.cancelled.load();
     };
 
-    const auto result = transcriber->transcribe (samples, options, callback);
+    const auto result = transcriber->transcribe (modelInput, options, callback);
 
     if (! result.has_value())
     {
@@ -207,6 +228,15 @@ void TranscriptionService::runJob (TranscriptionJob& job)
         const auto detail = juce::String (msl::describe (result.error()));
         juce::Logger::writeToLog ("transcription: failed: " + detail);
         return finish (Outcome::failed, classify (result.error()), detail);
+    }
+
+    // Note ends from the audio itself: the model's are key releases, and a
+    // ringing chord outlives those.
+    if (job.onNotesRevised && ! job.cancelled)
+    {
+        allNotes = holdNoteEnds (std::move (allNotes), samples, shouldCancel);
+        if (! job.cancelled)
+            job.onNotesRevised (allNotes);
     }
 
     // The refined tempo: the whole file, with the notes sharpening the onsets

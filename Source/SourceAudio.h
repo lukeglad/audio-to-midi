@@ -4,6 +4,10 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "Engine/HostTiming.h"
+
+#include <optional>
+
 //==============================================================================
 /**
     A min/max summary of the source audio, for drawing the waveform band.
@@ -35,6 +39,11 @@ struct SourceAudio
     double sampleRate = 0.0;
     juce::AudioBuffer<float> samples;
     WaveformSummary waveform;
+
+    // Set when this was recorded from a host with a timeline: the notes then
+    // sit on the host's grid (see the processor's tempo state) rather than
+    // a detected one.
+    std::optional<atm::HostTiming> host;
 
     double getLengthSeconds() const noexcept
     {
@@ -72,4 +81,13 @@ DecodeResult decodeAudioFile (const juce::File&, const std::function<bool()>& sh
 /** Decodes state bytes written by an earlier session (`extension` says
     what they are). The same bytes come back as the result's stateBytes. */
 DecodeResult decodeAudioData (std::shared_ptr<const juce::MemoryBlock> bytes, const juce::String& extension,
-                              const juce::String& fileName, const std::function<bool()>& shouldAbort);
+                              const juce::String& fileName, const std::function<bool()>& shouldAbort,
+                              std::optional<atm::HostTiming> host = std::nullopt);
+
+/** A recording from the plugin's input as a source, with FLAC state bytes.
+    Blocking (the encode); call it from a background thread. */
+DecodeResult sourceFromRecording (juce::AudioBuffer<float> samples, double sampleRate,
+                                  std::optional<atm::HostTiming> host, const std::function<bool()>& shouldAbort);
+
+/** What a recording is called in the top bar and in file names. */
+inline const char* const kRecordingName = "recording";
