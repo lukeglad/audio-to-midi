@@ -9,6 +9,7 @@
 #include "Chip.h"
 #include "Glass.h"
 #include "LayerChip.h"
+#include "MixControl.h"
 #include "PlayButton.h"
 #include "QuantizeControl.h"
 #include "RecordButton.h"
@@ -89,6 +90,10 @@ public:
     void setTempo (double bpm, bool editable);
     std::function<void (double bpm)> onTempoChanged;
     std::function<void (atm::Grid)> onGridChanged;
+
+    /** The preview mix pill at the roll's bottom-left: shown with a file. */
+    void setMix (bool hasFile, float mix01);
+    std::function<void (float mix01)> onMixChanged;
 
     /** The preview playhead, in seconds; negative hides it. Copper: the
         brief's second reserved role for the accent. */
@@ -252,6 +257,7 @@ private:
     std::vector<float> livePeaks;
     double livePeakSeconds = 0.02, liveSeconds = 0.0;
     QuantizeLabel quantizeLabel;
+    MixPill mixPill;
     QuantizeFader quantizeFader;
     std::vector<Layer> layers;                // ordered by key: GM family order, drums last
     LayerChip allChip { "all" };

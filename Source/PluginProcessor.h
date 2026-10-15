@@ -218,7 +218,7 @@ private:
         bool complete = true;
         TempoState tempo;
         atm::CleanupSettings cleanup;
-        float mix = 0.5f;
+        float mix = 1.0f;
         std::vector<int> muted, soloed;
         std::optional<atm::HostTiming> host;
     };

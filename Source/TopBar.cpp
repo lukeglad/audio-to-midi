@@ -70,17 +70,6 @@ TopBar::TopBar()
     addAndMakeVisible (modelButton);
 
 
-    // Mix: 0 = the original audio, 100 = the synth, read as "mix 50%".
-    mixValue.setRange (0.0, 100.0, 0.5);
-    mixValue.format = [] (double v) { return "mix " + juce::String (juce::roundToInt (v)) + "%"; };
-    mixValue.parse = [] (const juce::String& text)
-    {
-        const auto digits = text.retainCharacters ("0123456789.");
-        return digits.isEmpty() ? std::numeric_limits<double>::quiet_NaN() : digits.getDoubleValue();
-    };
-    mixValue.onValueChanged = [this] (double v) { if (onMixChanged) onMixChanged ((float) (v / 100.0)); };
-    mixValue.setFont (LnF::uiFont (kTextSize));
-    addChildComponent (mixValue);
 
 
 
@@ -106,17 +95,6 @@ void TopBar::setModelLabel (const juce::String& label)
     modelButton.repaint();
 }
 
-void TopBar::setMix (bool has, float mix01)
-{
-    hasFile = has;
-    mixValue.setVisible (has);
-
-    if (! mixValue.isBeingEdited())
-        mixValue.setValue (mix01 * 100.0, juce::dontSendNotification);
-
-    resized();
-}
-
 void TopBar::resized()
 {
     // The "?" at the very right, the model control just left of it.
@@ -124,14 +102,6 @@ void TopBar::resized()
     modelButton.setBounds (helpButton.getX() - kSideInset - modelButton.getIdealWidth(), 0,
                            modelButton.getIdealWidth(), getHeight());
 
-    auto left = getLocalBounds().withTrimmedLeft (kSideInset);
-
-    // The mix at the left (the tempo moved to the grid pill, 2026-10-15).
-    if (hasFile)
-    {
-        const int mixW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (LnF::uiFont (kTextSize), mixValue.getText())) + 6;
-        mixValue.setBounds (left.removeFromLeft (mixW));
-    }
 }
 
 void TopBar::setLiveText (const juce::String& text)
@@ -150,7 +120,7 @@ void TopBar::paint (juce::Graphics& g)
         // Centred like the file readout, and kept clear of the controls
         // either side on a narrow window: cut with an ellipsis if it must.
         const auto font = LnF::uiFont (kTextSize);
-        const float leftEdge  = (float) (hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
+        const float leftEdge  = (float) kSideInset;
         const float rightEdge = (float) (modelButton.getX() - kSideInset);
         const float textW     = juce::jmin (rightEdge - leftEdge, juce::GlyphArrangement::getStringWidth (font, liveText) + 1.0f);
         const float x         = juce::jlimit (leftEdge, juce::jmax (leftEdge, rightEdge - textW), ((float) getWidth() - textW) * 0.5f);
@@ -176,7 +146,7 @@ void TopBar::paint (juce::Graphics& g)
 
     // Centred on the bar when it fits, otherwise centred in the space left
     // between the controls either side, the name cut with an ellipsis.
-    const float leftEdge  = (float) (hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
+    const float leftEdge  = (float) kSideInset;
     const float rightEdge = (float) (modelButton.getX() - kSideInset);
     const float maxNameW  = juce::jmax (0.0f, rightEdge - leftEdge - gapW - lengthW);
     const float nameW     = juce::jmin (maxNameW, juce::GlyphArrangement::getStringWidth (font, fileName) + 1.0f);

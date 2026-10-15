@@ -83,6 +83,9 @@ Canvas::Canvas()
     addChildComponent (quantizeLabel);
     addChildComponent (quantizeFader);
 
+    mixPill.onChanged = [this] (float v) { if (onMixChanged) onMixChanged (v); };
+    addChildComponent (mixPill);
+
     strip.onMute = [this] (int layer) { if (onMuteToggled) onMuteToggled (layer); showStripFor (layer); };
     strip.onSolo = [this] (int layer) { if (onSoloToggled) onSoloToggled (layer); showStripFor (layer); };
     addChildComponent (strip);
@@ -497,6 +500,16 @@ void Canvas::setTempo (double bpm, bool editable)
     quantizeLabel.setTempo (bpm, editable);
 }
 
+void Canvas::setMix (bool hasFile, float mix01)
+{
+    mixPill.setValue (mix01);
+    if (hasFile != mixPill.isVisible())
+    {
+        mixPill.setVisible (hasFile);
+        repaint (rollArea());   // bar numbers make room for it
+    }
+}
+
 void Canvas::setQuantize (double amount01, atm::Grid quantizeGrid, bool hasGrid)
 {
     quantizeLabel.setValues (amount01, quantizeGrid);
@@ -530,6 +543,10 @@ void Canvas::layoutQuantize()
     quantizeFader.setBounds (pct.getCentreX() - QuantizeFader::kWidth / 2, quantizeLabel.getY() - QuantizeFader::kHeight - QuantizeFader::kGap,
                              QuantizeFader::kWidth, QuantizeFader::kHeight + QuantizeFader::kGap);
     quantizeFader.setSurfaceColour (LnF::surfaceAt (LnF::background(), (float) quantizeFader.getBounds().getCentreY() / height));
+
+    // The mix at the bottom-left, the grid pill's mirror.
+    mixPill.setBounds (roll.getX() + 10, quantizeLabel.getY(), mixPill.getIdealWidth(), MixPill::kHeight);
+    mixPill.setSurfaceColour (LnF::surfaceAt (LnF::background(), (float) mixPill.getBounds().getCentreY() / height));
 }
 
 void Canvas::showFader()
@@ -914,8 +931,9 @@ void Canvas::paintGrid (juce::Graphics& g) const
         // goes unnumbered.
         const int barNumber = fromDownbeat / grid->beatsPerBar + grid->firstBarNumber;
         // ...and skips the stretch under the quantize label.
-        const bool underLabel = quantizeLabel.isVisible() && x + 20.0f > (float) quantizeLabel.getX() - 4.0f
-                             && x < (float) quantizeLabel.getRight() + 4.0f;
+        const bool underMix = mixPill.isVisible() && x < (float) mixPill.getRight() + 4.0f;
+        const bool underLabel = underMix || (quantizeLabel.isVisible() && x + 20.0f > (float) quantizeLabel.getX() - 4.0f
+                             && x < (float) quantizeLabel.getRight() + 4.0f);
         if (bar && drawNumbers && fromDownbeat >= 0 && ! underLabel)
         {
             g.setColour (LnF::ink().withAlpha (0.30f));

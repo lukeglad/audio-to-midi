@@ -102,6 +102,7 @@ target_sources (AudioToMidi PRIVATE
     Source/GlassMenu.cpp
     Source/GuideOverlay.cpp
     Source/LayerChip.cpp
+    Source/MixControl.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
     Source/QuantizeControl.cpp
@@ -155,6 +156,7 @@ target_sources (atm-ui PRIVATE
     Source/GlassMenu.cpp
     Source/GuideOverlay.cpp
     Source/LayerChip.cpp
+    Source/MixControl.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
     Source/QuantizeControl.cpp

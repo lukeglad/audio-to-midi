@@ -21,8 +21,9 @@ namespace
           "once (muted ones are left out). A recording's MIDI starts at the bar named at the top: "
           "drop it there. Right-click a chip to save the file instead." },
         { "Listen",
-          "Play previews the notes over your audio; drag \"mix\" to hear more of either. Hover a "
-          "chip for mute and solo. Click or drag in the waveform to move around." },
+          "Play previews the notes. The fader at the bottom left slides between your audio and the "
+          "midi; click either word to hear only that. Hover a chip for mute and solo. Click or "
+          "drag in the waveform to move around." },
         { "Timing",
           "Tempo and quantize sit together at the bottom right. If the grid is off, drag the tempo "
           "or double-click it to type. Hover the quantize percentage for a fader that pulls notes "

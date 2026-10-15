@@ -145,7 +145,7 @@ namespace atm
         std::atomic<double> playStartSeconds { 0.0 };
         std::atomic<int> seekGeneration { 0 };
         int seenSeekGeneration = 0;
-        std::atomic<float> mix { 0.5f };
+        std::atomic<float> mix { 1.0f };   // all notes by default (user's call 2026-10-15)
 
         std::array<std::atomic<bool>, kLayerSlots> muted {}, soloed {};
         std::atomic<int> soloCount { 0 };

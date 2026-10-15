@@ -9,8 +9,8 @@
 //==============================================================================
 /**
     The 20 px top bar: the only fixed furniture (house rule). Global things
-    only. Left: the preview mix (play lives in the waveform corner; the tempo
-    moved to the grid pill at the roll's bottom-right on 2026-10-15). Centre:
+    only. The mix and the tempo moved down to pills at the roll's bottom
+    corners on 2026-10-15; play lives in the waveform corner. Centre:
     the loaded file's name and length, kept clear of both sides, or the
     copper recording readout. Right: the model control, then the "?".
 
@@ -33,9 +33,6 @@ public:
         "recording · from bar 9 · 0:04". */
     void setLiveText (const juce::String&);
 
-    /** The preview mix: shown with a file loaded. */
-    void setMix (bool hasFile, float mix01);
-    std::function<void (float)> onMixChanged;   // 0..1
 
     juce::Component& getModelControl() noexcept { return modelButton; }
     std::function<void()> onModelClicked;
@@ -70,8 +67,6 @@ private:
     MenuButton modelButton;
     IconButton helpButton { AudioFlowerIcons::kHelp };
 
-    DragValue mixValue;
-    bool hasFile = false;
 
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TopBar)

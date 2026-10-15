@@ -360,7 +360,7 @@ void AudioToMidiProcessor::setStateInformation (const void* data, int sizeInByte
 
     if (const auto p = state.getChildWithName ("preview"); p.isValid())
     {
-        restore.mix = (float) (double) p.getProperty ("mix", 0.5);
+        restore.mix = (float) (double) p.getProperty ("mix", 1.0);
         restore.muted = splitInts (p.getProperty ("muted", ""));
         restore.soloed = splitInts (p.getProperty ("soloed", ""));
     }
