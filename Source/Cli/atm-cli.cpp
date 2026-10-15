@@ -616,6 +616,65 @@ namespace
         report ("exports from bar 9", std::abs (tick - 2 * atm::kTicksPerQuarter) < 1.0,
                 "first-beat note at tick " + juce::String (tick, 0) + " (expected 1920)");
 
+        // 6a. A host that reports the wrong last bar start (FL said 0 while
+        //     playing from bar 4): the bar is worked out from the position.
+        {
+            result.reset();
+            done.reset();
+            atm::HostPosition wrong;
+            wrong.hasTransport = true;
+            wrong.playing = true;
+            wrong.bpm = 120.0;
+            wrong.ppq = 12.0;          // bar 4, beat 1
+            wrong.barStartPpq = 0.0;   // what FL said
+            recorder.setArmed (true);
+            for (int i = 0; i < block; ++i) { in.setSample (0, i, 0.5f); in.setSample (1, i, 0.5f); }
+            recorder.process (in, wrong);
+            const auto live = recorder.getHostTiming();
+            recorder.stop();
+            done.wait (5000);
+            report ("bar from position", live.has_value() && live->startBar == 4 && juce::exactlyEqual (live->barStartPpq, 12.0),
+                    live ? "live readout says bar " + juce::String (live->startBar) + " (expected 4)" : "no timing");
+        }
+
+        // 6b. A loop: bars 1-2 (8 beats) at 120, playing round twice. The take
+        //     must end where the playhead wraps, after one 4-second pass.
+        {
+            result.reset();
+            done.reset();
+            atm::HostPosition loop;
+            loop.hasTransport = true;
+            loop.playing = true;
+            loop.bpm = 120.0;
+            loop.ppq = 0.0;
+            recorder.setArmed (true);
+
+            const int blocks = (int) (8.0 * rate / block);   // 8 s: two passes
+            for (int b = 0; b < blocks; ++b)
+            {
+                // A tone the whole time, so the silence trim keeps all of it.
+                for (int i = 0; i < block; ++i)
+                {
+                    const float v = 0.5f * (float) std::sin (angle);
+                    angle += 2.0 * juce::MathConstants<double>::pi * 440.0 / rate;
+                    in.setSample (0, i, v);
+                    in.setSample (1, i, v);
+                }
+                recorder.process (in, loop);
+                loop.ppq += block / rate * loop.bpm / 60.0;
+                if (loop.ppq >= 8.0)
+                    loop.ppq -= 8.0;   // the wrap
+                loop.barStartPpq = std::floor (loop.ppq / 4.0) * 4.0;
+                if (b % 64 == 0)
+                    juce::Thread::sleep (1);
+            }
+
+            const bool loopFinished = done.wait (5000);
+            const double captured = loopFinished && result.has_value() ? result->samples.getNumSamples() / rate : 0.0;
+            report ("loop ends the take", loopFinished && result.has_value() && ! result->silent && std::abs (captured - 4.0) < 0.05,
+                    juce::String (captured, 2) + " s kept of one 4 s pass (8 s played)");
+        }
+
         // 7. No transport: starts at once, ends on stop(), no host timing.
         result.reset();
         done.reset();

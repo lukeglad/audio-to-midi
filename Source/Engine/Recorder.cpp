@@ -9,6 +9,11 @@ namespace
     constexpr int    kDrainPollMs = 20;
     constexpr double kTrimLeadSeconds = 0.05, kTrimTailSeconds = 0.2;
 
+    // A playhead more than this far from where playing on would have put it
+    // has jumped (a loop wrapping, a locate). Blocks advance a fraction of a
+    // beat, so this only trips on a real jump.
+    constexpr double kJumpBeats = 0.25;
+
     HostTiming timingFor (const HostPosition& host)
     {
         HostTiming t;
@@ -17,6 +22,7 @@ namespace
         t.quartersPerBar = juce::jmax (0.25, host.timeSigNumerator * 4.0 / juce::jmax (1, host.timeSigDenominator));
         t.barStartPpq = host.barStartPpq;
         t.startBar = (int) std::lround (t.barStartPpq / t.quartersPerBar) + 1;
+        t.settleBar();   // in case the host's bar start doesn't match its position
         return t;
     }
 }
@@ -89,6 +95,7 @@ void Recorder::beginCapture (const HostPosition& host)
     peakSoFar.store (0.0f);
     startHasHost = host.hasTransport;
     startTiming = timingFor (host);
+    hasExpectedPpq = false;
     phase.store (Phase::recording, std::memory_order_release);
 }
 
@@ -120,11 +127,19 @@ void Recorder::process (const juce::AudioBuffer<float>& input, const HostPositio
     const int numSamples = input.getNumSamples();
     const bool full = samplesIn.load() + numSamples > (juce::int64) (kMaxSeconds * sampleRate.load());
 
-    if ((host.hasTransport && ! host.playing) || full)
+    // The pass is over when the host stops, or when its playhead jumps: a
+    // loop wrapping back to its start would otherwise lay a second pass
+    // after the first. The block that jumped belongs to the next pass.
+    const bool jumped = host.hasTransport && hasExpectedPpq && std::abs (host.ppq - expectedPpq) > kJumpBeats;
+
+    if ((host.hasTransport && ! host.playing) || jumped || full)
     {
         endCapture();
         return;
     }
+
+    expectedPpq = host.ppq + numSamples / sampleRate.load() * host.bpm / 60.0;
+    hasExpectedPpq = host.hasTransport;
 
     if (input.getNumChannels() == 0 || numSamples <= 0)
         return;

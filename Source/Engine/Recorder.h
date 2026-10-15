@@ -28,7 +28,9 @@ namespace atm
 
         Arm it; the recording begins at the first block the host is playing
         (at once, where there is no transport) and ends when the host stops,
-        when stop() is called, or at the length cap. The audio thread writes
+        when its playhead jumps (a loop going round, a click elsewhere on the
+        timeline: one pass, not two laid end to end), when stop() is called,
+        or at the length cap. The audio thread writes
         into a FIFO that this object's own thread drains into memory, so a
         recording never depends on the message thread keeping up. When it
         ends, leading and trailing silence are trimmed (the host timing moves
@@ -112,6 +114,11 @@ namespace atm
         // read by others only while that phase holds.
         HostTiming startTiming;
         bool startHasHost = false;
+
+        // Audio thread: where the host's playhead should be at the next
+        // block if it simply played on.
+        double expectedPpq = 0.0;
+        bool hasExpectedPpq = false;
 
         juce::AbstractFifo fifo { 1 };
         juce::AudioBuffer<float> ring;

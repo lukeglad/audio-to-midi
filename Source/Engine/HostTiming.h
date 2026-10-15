@@ -21,10 +21,26 @@ namespace atm
         void advance (double seconds) noexcept
         {
             ppqAtStart += seconds * bpm / 60.0;
-            while (quartersPerBar > 0.0 && ppqAtStart >= barStartPpq + quartersPerBar - 1.0e-9)
+            settleBar();
+        }
+
+        /** Moves the bar start (and its number) to the bar that actually
+            holds ppqAtStart. Hosts don't all report the last bar start
+            reliably: FL said 0 while playing from bar 4 (2026-10-15). */
+        void settleBar() noexcept
+        {
+            if (quartersPerBar <= 0.0)
+                return;
+
+            while (ppqAtStart >= barStartPpq + quartersPerBar - 1.0e-9)
             {
                 barStartPpq += quartersPerBar;
                 ++startBar;
+            }
+            while (ppqAtStart < barStartPpq - 1.0e-9)
+            {
+                barStartPpq -= quartersPerBar;
+                --startBar;
             }
         }
     };
