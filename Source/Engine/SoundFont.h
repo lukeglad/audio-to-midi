@@ -92,7 +92,7 @@ namespace atm
         explicit SoundFontSynth (std::shared_ptr<const SoundFont>);
         ~SoundFontSynth() override;
 
-        void noteOn (int layer, int pitch, bool drum) override;
+        void noteOn (int layer, int pitch, bool drum, int velocity) override;
         void noteOff (int layer, int pitch, bool drum) override;
         void releaseAll() override;
         void cutAll() override;

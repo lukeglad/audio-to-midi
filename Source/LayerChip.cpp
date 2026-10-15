@@ -17,6 +17,16 @@ LayerChip::LayerChip (const juce::String& n)
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
+void LayerChip::setAllStyle (bool shouldBeAll)
+{
+    if (shouldBeAll != allStyle) { allStyle = shouldBeAll; repaint(); }
+}
+
+void LayerChip::setLabel (const juce::String& newName)
+{
+    if (newName != name) { name = newName; repaint(); }
+}
+
 void LayerChip::setLit (bool shouldBeLit)
 {
     if (shouldBeLit != lit) { lit = shouldBeLit; repaint(); }
@@ -50,8 +60,11 @@ void LayerChip::paint (juce::Graphics& g)
     // Lit: the house hot-chip treatment (solid ink fill, ground text), so
     // the state never depends on reading through glass. Otherwise liquid
     // glass, with a copper rim + text when selected (copper = the selected
-    // layer).
-    if (lit)
+    // layer). The "all" chip lights itself on hover, as the canvas lights a
+    // hovered layer chip.
+    const bool showLit = lit || (allStyle && hovered);
+
+    if (showLit)
     {
         g.setColour (LnF::ink());
         g.fillRoundedRectangle (r, radius);
@@ -66,18 +79,22 @@ void LayerChip::paint (juce::Graphics& g)
     }
 
     // A silenced layer's name steps down to "engaged-suppressed".
-    g.setColour (lit ? LnF::background() : selected ? LnF::accent() : LnF::ink().withAlpha (isMuted ? 0.45f : 0.85f));
+    g.setColour (showLit ? LnF::background() : selected ? LnF::accent() : LnF::ink().withAlpha (isMuted ? 0.45f : 0.85f));
     g.setFont (LnF::uiFont (kTextSize));
     g.drawText (name, getLocalBounds(), juce::Justification::centred, false);
 }
 
 void LayerChip::mouseEnter (const juce::MouseEvent&)
 {
+    hovered = true;
+    if (allStyle) repaint();
     if (onHoverChanged) onHoverChanged (true);
 }
 
 void LayerChip::mouseExit (const juce::MouseEvent&)
 {
+    hovered = false;
+    if (allStyle) repaint();
     if (onHoverChanged) onHoverChanged (false);
 }
 

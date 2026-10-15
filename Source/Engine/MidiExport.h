@@ -67,9 +67,23 @@ namespace atm
     */
     juce::MidiFile buildLayerMidi (const std::vector<MidiNote>& allNotes, int layerKey, const ExportTiming&);
 
+    /**
+        Several layers as one multi-track (type 1) MIDI file: one track per
+        layer, named after it, in `layerKeys` order. Drums on channel 10;
+        every other layer on a channel of its own (1-9, then 11-16, then
+        round again), so a DAW importing it keeps the instruments apart. FL
+        asks once ("create one channel per track") and makes a channel per
+        layer in one pattern.
+    */
+    juce::MidiFile buildLayersMidi (const std::vector<MidiNote>& allNotes, const std::vector<int>& layerKeys, const ExportTiming&);
+
     /** Writes `midi` to `file`, replacing it. */
     bool writeMidiFile (const juce::MidiFile& midi, const juce::File& file);
 
     /** "<audio name> - <layer>.mid", made safe for a file name. */
     juce::String layerMidiFileName (const juce::String& audioFileName, int layerKey);
+
+    /** "<audio name> - all layers.mid", or "- 2 layers.mid" when it carries
+        fewer than all of them. */
+    juce::String layersMidiFileName (const juce::String& audioFileName, int numLayers, bool allOfThem);
 }

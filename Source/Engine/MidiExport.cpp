@@ -53,11 +53,13 @@ double tickFor (double seconds, const ExportTiming& timing)
     return seconds * kTicksPerQuarter * juce::jlimit (20.0, 999.0, timing.hostBpm) / 60.0;
 }
 
-juce::MidiFile buildLayerMidi (const std::vector<MidiNote>& allNotes, int layerKey, const ExportTiming& timing)
+namespace
 {
+    /** One layer's notes on `channel`, named after the layer, with its program. */
+    juce::MidiMessageSequence layerTrack (const std::vector<MidiNote>& allNotes, int layerKey, int channel, const ExportTiming& timing)
+    {
     const double bpm = juce::jlimit (20.0, 999.0, timing.hostBpm);
     const bool drums = layerKey == kDrumLayer;
-    const int channel = drums ? 10 : 1;
 
     // Per pitch, in onset order, so each note can be cut at the next one.
     struct Span { int start, end, velocity; bool operator< (const Span& o) const { return start < o.start; } };
@@ -114,10 +116,35 @@ juce::MidiFile buildLayerMidi (const std::vector<MidiNote>& allNotes, int layerK
     track.addSequence (ons, 0);
     track.addEvent (juce::MidiMessage::endOfTrack(), lastTick);
     track.updateMatchedPairs();
+    return track;
+    }
+}
 
+juce::MidiFile buildLayerMidi (const std::vector<MidiNote>& allNotes, int layerKey, const ExportTiming& timing)
+{
     juce::MidiFile file;
     file.setTicksPerQuarterNote (kTicksPerQuarter);
-    file.addTrack (track);
+    file.addTrack (layerTrack (allNotes, layerKey, layerKey == kDrumLayer ? 10 : 1, timing));
+    return file;
+}
+
+juce::MidiFile buildLayersMidi (const std::vector<MidiNote>& allNotes, const std::vector<int>& layerKeys, const ExportTiming& timing)
+{
+    juce::MidiFile file;
+    file.setTicksPerQuarterNote (kTicksPerQuarter);
+
+    int nextChannel = 1;
+    for (const int key : layerKeys)
+    {
+        int channel = 10;
+        if (key != kDrumLayer)
+        {
+            channel = nextChannel;
+            nextChannel = nextChannel == 9 ? 11 : nextChannel == 16 ? 1 : nextChannel + 1;
+        }
+        file.addTrack (layerTrack (allNotes, key, channel, timing));
+    }
+
     return file;
 }
 
@@ -128,11 +155,24 @@ bool writeMidiFile (const juce::MidiFile& midi, const juce::File& file)
     return ! out.failedToOpen() && midi.writeTo (out, 1) && out.getStatus().wasOk();
 }
 
+namespace
+{
+    juce::String midiBaseName (const juce::String& audioFileName)
+    {
+        const auto base = juce::File::createLegalFileName (juce::File (audioFileName).getFileNameWithoutExtension());
+        return base.isEmpty() ? juce::String ("transcription") : base;
+    }
+}
+
 juce::String layerMidiFileName (const juce::String& audioFileName, int layerKey)
 {
-    const auto base = juce::File::createLegalFileName (juce::File (audioFileName).getFileNameWithoutExtension());
-    return juce::File::createLegalFileName ((base.isEmpty() ? juce::String ("transcription") : base)
-                                            + " - " + layerName (layerKey)) + ".mid";
+    return juce::File::createLegalFileName (midiBaseName (audioFileName) + " - " + layerName (layerKey)) + ".mid";
+}
+
+juce::String layersMidiFileName (const juce::String& audioFileName, int numLayers, bool allOfThem)
+{
+    const auto what = allOfThem ? juce::String ("all layers") : juce::String (numLayers) + (numLayers == 1 ? " layer" : " layers");
+    return juce::File::createLegalFileName (midiBaseName (audioFileName) + " - " + what) + ".mid";
 }
 
 } // namespace atm

@@ -115,6 +115,12 @@ public:
     /** Right-click → "save as .mid…" on a layer chip. */
     std::function<void (int layerKey)> onSaveLayer;
 
+    /** The "all" chip, after the layer chips with two or more layers: every
+        audible layer in one multi-track file. `allOfThem` is false when
+        mute or solo leaves some out. */
+    std::function<juce::File (const std::vector<int>& layerKeys, bool allOfThem)> makeAllMidiFile;
+    std::function<void (const std::vector<int>& layerKeys, bool allOfThem)> onSaveAll;
+
     void paint (juce::Graphics&) override;
 
     /** What the canvas draws, without its children: the glass surfaces
@@ -208,6 +214,9 @@ private:
     int litLayer() const noexcept { return chipHover >= 0 ? chipHover : noteHover; }
     int layerAt (juce::Point<float>) const;
     void showLayerMenu (int key);
+    void showAllMenu();
+    std::vector<int> audibleLayerKeys() const;
+    void refreshAllChip();
 
     std::shared_ptr<const SourceAudio> source;
     juce::String loadingFileName, loadError;
@@ -235,6 +244,8 @@ private:
     QuantizeLabel quantizeLabel;
     QuantizeFader quantizeFader;
     std::vector<Layer> layers;                // ordered by key: GM family order, drums last
+    LayerChip allChip { "all" };
+    juce::String allChipLabel { "all" };
     int pitchLow = 48, pitchHigh = 72;        // [low, high), whole octaves; grows only
     bool hasPitchRange = false;
     int selectedLayer = -1, chipHover = -1, noteHover = -1;

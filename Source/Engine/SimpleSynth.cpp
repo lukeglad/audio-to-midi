@@ -33,7 +33,7 @@ namespace
     }
 }
 
-void SimpleSynth::noteOn (int layer, int pitch, bool drum)
+void SimpleSynth::noteOn (int layer, int pitch, bool drum, int velocity)
 {
     // Steal the oldest voice if none is free.
     Voice* chosen = nullptr;
@@ -55,6 +55,7 @@ void SimpleSynth::noteOn (int layer, int pitch, bool drum)
     v.drum = drum;
     v.drumKind = drumKindFor (pitch);
     v.order = ++counter;
+    v.gain = (float) juce::jlimit (1, 127, velocity) / 100.0f;
     v.phase = 0.0;
     v.env = 0.0;
     v.freq = 440.0 * std::pow (2.0, (pitch - 69) / 12.0);
@@ -177,7 +178,7 @@ void SimpleSynth::render (float* left, float* right, int numSamples, double samp
 
         for (int i = 0; i < numSamples; ++i)
         {
-            const float sample = kLevel * renderVoice (voice, sampleRate);
+            const float sample = kLevel * voice.gain * renderVoice (voice, sampleRate);
             left[i] += sample;
             right[i] += sample;
             if (! voice.active)

@@ -17,7 +17,7 @@ namespace atm
     class SimpleSynth : public NoteSynth
     {
     public:
-        void noteOn (int layer, int pitch, bool drum) override;
+        void noteOn (int layer, int pitch, bool drum, int velocity) override;
         void noteOff (int layer, int pitch, bool drum) override;
         void releaseAll() override;
         void cutAll() override;
@@ -32,6 +32,7 @@ namespace atm
             bool drum = false;
             int drumKind = 0;
             juce::uint32 order = 0;
+            float gain = 1.0f;                  // from the velocity
             double phase = 0.0, freq = 440.0;   // phase: elapsed seconds
             double env = 0.0;
             bool released = false;

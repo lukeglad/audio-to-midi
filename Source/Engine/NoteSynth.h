@@ -16,8 +16,9 @@ namespace atm
     public:
         virtual ~NoteSynth() = default;
 
-        /** `layer` is the note's layer key (its GM program, or 128 for drums). */
-        virtual void noteOn (int layer, int pitch, bool drum) = 0;
+        /** `layer` is the note's layer key (its GM program, or 128 for drums);
+            `velocity` 1..127. */
+        virtual void noteOn (int layer, int pitch, bool drum, int velocity) = 0;
         virtual void noteOff (int layer, int pitch, bool drum) = 0;
 
         /** Let everything sounding ring out through its release (a jump

@@ -196,7 +196,7 @@ void Preview::emit (const Event& event)
 
 void Preview::endHeld (Held& h, int offset)
 {
-    emit ({ offset, 0, false, h.layer, h.pitch, h.drum });
+    emit ({ offset, 0, false, h.layer, h.pitch, h.drum, 100 });
     h.active = false;
 }
 
@@ -236,7 +236,7 @@ void Preview::startNote (const MidiNote& note, int offset)
     slot->releaseSample = juce::jmax (note.offset, note.onset + kMinNoteSeconds) * sampleRate.load();
     slot->order = ++holdCounter;
 
-    emit ({ offset, 0, true, note.layer, note.pitch, note.drum });
+    emit ({ offset, 0, true, note.layer, note.pitch, note.drum, note.velocity });
 }
 
 void Preview::beginDeclick (double fromSeconds)
@@ -372,7 +372,7 @@ bool Preview::render (juce::AudioBuffer<float>& buffer)
         }
 
         if (event.on)
-            synth.noteOn (event.layer, event.pitch, event.drum);
+            synth.noteOn (event.layer, event.pitch, event.drum, event.velocity);
         else
             synth.noteOff (event.layer, event.pitch, event.drum);
     }

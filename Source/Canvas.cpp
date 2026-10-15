@@ -59,6 +59,15 @@ Canvas::Canvas()
     actionChip.onClick = [this] { if (onAction) onAction(); };
     addChildComponent (actionChip);
 
+    allChip.setAllStyle (true);
+    allChip.makeDragFile = [this]
+    {
+        const auto keys = audibleLayerKeys();
+        return makeAllMidiFile && ! keys.empty() ? makeAllMidiFile (keys, keys.size() == layers.size()) : juce::File();
+    };
+    allChip.onContextMenu = [this] { showAllMenu(); };
+    addChildComponent (allChip);
+
     playButton.onClick = [this] { if (onPlayClicked) onPlayClicked(); };
     addChildComponent (playButton);
     recordButton.onClick = [this] { if (onRecordClicked) onRecordClicked(); };
@@ -350,6 +359,50 @@ void Canvas::refreshLayerStates()
         layer.chip->setSelected (layer.key == selectedLayer);
         layer.chip->setMuted (isLayerAudible ? ! isLayerAudible (layer.key) : false);
     }
+
+    refreshAllChip();
+}
+
+std::vector<int> Canvas::audibleLayerKeys() const
+{
+    std::vector<int> keys;
+    for (const auto& layer : layers)
+        if (! isLayerAudible || isLayerAudible (layer.key))
+            keys.push_back (layer.key);
+    return keys;
+}
+
+void Canvas::refreshAllChip()
+{
+    // Says what a drag would carry: "all", or "2 layers" when mute or solo
+    // leaves some out. Gone with a single layer, whose own chip is all.
+    const bool show = layers.size() >= 2;
+    const auto count = audibleLayerKeys().size();
+    const juce::String label = count == layers.size() ? juce::String ("all")
+                                                      : juce::String ((int) count) + (count == 1 ? " layer" : " layers");
+
+    const bool changed = show != allChip.isVisible() || label != allChipLabel;
+    allChipLabel = label;
+    allChip.setLabel (label);
+    allChip.setVisible (show);
+    if (changed)
+        layoutChips();
+}
+
+void Canvas::showAllMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (1, "save as .mid" + juce::String (juce::CharPointer_UTF8 ("\xE2\x80\xA6")));
+
+    juce::Component::SafePointer<Canvas> safeThis (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&allChip), [safeThis] (int result)
+    {
+        if (safeThis == nullptr || result != 1 || ! safeThis->onSaveAll)
+            return;
+        const auto keys = safeThis->audibleLayerKeys();
+        if (! keys.empty())
+            safeThis->onSaveAll (keys, keys.size() == safeThis->layers.size());
+    });
 }
 
 void Canvas::showLayerMenu (int key)
@@ -494,6 +547,21 @@ void Canvas::layoutChips()
 
         layer.chip->setBounds (x, y, w, LayerChip::kHeight);
         layer.chip->setSurfaceColour (LnF::surfaceAt (base, (float) (y + LayerChip::kHeight / 2) / height));
+        x += w + kChipGap;
+    }
+
+    // The "all" chip follows the layers, a little apart from them.
+    if (allChip.isVisible())
+    {
+        const int w = allChip.getIdealWidth() + 4;
+        x += 4;
+        if (x > area.getX() && x + w > area.getRight())
+        {
+            x = area.getX();
+            y += LayerChip::kHeight + kChipGap;
+        }
+        allChip.setBounds (x, y, w, LayerChip::kHeight);
+        allChip.setSurfaceColour (LnF::surfaceAt (base, (float) (y + LayerChip::kHeight / 2) / height));
         x += w + kChipGap;
     }
 

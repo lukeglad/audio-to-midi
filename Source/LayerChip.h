@@ -18,6 +18,12 @@ class LayerChip : public juce::Component
 public:
     explicit LayerChip (const juce::String& name);
 
+    /** The "all" chip that drags every audible layer at once: drawn like
+        the layer chips (liquid glass, solid ink while hovered), but it
+        lights itself on hover rather than being lit by the canvas. */
+    void setAllStyle (bool);
+    void setLabel (const juce::String&);
+
     void setLit (bool);
     void setSelected (bool);
     void setSurfaceColour (juce::Colour);
@@ -45,7 +51,7 @@ public:
 
 private:
     juce::String name;
-    bool lit = false, selected = false, isMuted = false;
+    bool lit = false, selected = false, isMuted = false, allStyle = false, hovered = false;
     juce::Colour surface;
     bool dragStarted = false, popupGesture = false;
 

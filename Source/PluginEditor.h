@@ -5,6 +5,7 @@
 #include "BinaryData.h"
 #include "Canvas.h"
 #include "PluginProcessor.h"
+#include "Engine/MidiExport.h"
 #include "TopBar.h"
 
 //==============================================================================
@@ -46,6 +47,9 @@ private:
     void showModelMenu();
     juce::File writeLayerMidi (int layerKey, const juce::File& destination) const;
     void saveLayerAs (int layerKey);
+    atm::ExportTiming exportTiming() const;
+    juce::File writeLayersMidi (const std::vector<int>& layerKeys, const juce::File& destination) const;
+    void saveLayersAs (const std::vector<int>& layerKeys, bool allOfThem);
 
     static constexpr float kUiScale = 1.3f;
     static constexpr int   kMinWidth = 540, kMinHeight = 404;

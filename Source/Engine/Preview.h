@@ -104,6 +104,7 @@ namespace atm
             bool on = false;
             int layer = 0, pitch = 60;
             bool drum = false;
+            int velocity = 100;
         };
 
         static constexpr int kMaxHeld = 96;

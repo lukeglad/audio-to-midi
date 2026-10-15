@@ -79,6 +79,15 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
                                                                                                        : juce::String(), layerKey)));
     };
     canvas.onSaveLayer = [this] (int layerKey) { saveLayerAs (layerKey); };
+    canvas.makeAllMidiFile = [this] (const std::vector<int>& keys, bool allOfThem)
+    {
+        const auto source = processorRef.getSource();
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AudioFlower MIDI");
+        folder.createDirectory();
+        return writeLayersMidi (keys, folder.getChildFile (atm::layersMidiFileName (source != nullptr ? source->fileName : juce::String(),
+                                                                                    (int) keys.size(), allOfThem)));
+    };
+    canvas.onSaveAll = [this] (const std::vector<int>& keys, bool allOfThem) { saveLayersAs (keys, allOfThem); };
 
     processorRef.addChangeListener (this);
     refreshFromProcessor();
@@ -537,7 +546,7 @@ void AudioToMidiEditor::showModelMenu()
 }
 
 //==============================================================================
-juce::File AudioToMidiEditor::writeLayerMidi (int layerKey, const juce::File& destination) const
+atm::ExportTiming AudioToMidiEditor::exportTiming() const
 {
     const auto& tempo = processorRef.getTempo();
     atm::ExportTiming timing;
@@ -547,9 +556,49 @@ juce::File AudioToMidiEditor::writeLayerMidi (int layerKey, const juce::File& de
     timing.earliestOnset = atm::earliestOnsetOf (processorRef.getCleanNotes());
     if (tempo.fromHost)
         timing.fixedLeadInBeats = atm::leadInBeatsFor (timing.tempo);   // the clip starts at the bar it was recorded from
+    return timing;
+}
 
-    const auto midi = atm::buildLayerMidi (processorRef.getCleanNotes(), layerKey, timing);
+juce::File AudioToMidiEditor::writeLayerMidi (int layerKey, const juce::File& destination) const
+{
+    const auto midi = atm::buildLayerMidi (processorRef.getCleanNotes(), layerKey, exportTiming());
     return atm::writeMidiFile (midi, destination) ? destination : juce::File();
+}
+
+juce::File AudioToMidiEditor::writeLayersMidi (const std::vector<int>& layerKeys, const juce::File& destination) const
+{
+    // Every layer in one file shares the same timing, including the same
+    // lead-in, so the tracks stay lined up with each other.
+    const auto midi = atm::buildLayersMidi (processorRef.getCleanNotes(), layerKeys, exportTiming());
+    return atm::writeMidiFile (midi, destination) ? destination : juce::File();
+}
+
+void AudioToMidiEditor::saveLayersAs (const std::vector<int>& layerKeys, bool allOfThem)
+{
+    const auto source = processorRef.getSource();
+    const auto suggested = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                               .getChildFile (atm::layersMidiFileName (source != nullptr ? source->fileName : juce::String(),
+                                                                       (int) layerKeys.size(), allOfThem));
+
+    saveChooser = std::make_unique<juce::FileChooser> ("save the layers as midi", suggested, "*.mid");
+
+    juce::Component::SafePointer<AudioToMidiEditor> safeThis (this);
+    saveChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safeThis, layerKeys] (const juce::FileChooser& chooser)
+    {
+        if (safeThis == nullptr)
+            return;
+
+        auto file = chooser.getResult();
+        if (file == juce::File())
+            return;
+
+        if (! file.hasFileExtension ("mid;midi"))
+            file = file.withFileExtension ("mid");
+
+        safeThis->writeLayersMidi (layerKeys, file);
+    });
 }
 
 void AudioToMidiEditor::saveLayerAs (int layerKey)

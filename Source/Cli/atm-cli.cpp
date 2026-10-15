@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <map>
 #include <mutex>
+#include <set>
 
 namespace
 {
@@ -41,6 +42,7 @@ namespace
     {
         print ("usage: atm-cli <audio file> [small|medium|large] [--cpu] [--notes N] [--midi DIR [--bpm B]]");
         print ("               [--quantize PCT] [--grid 4|8|16] [--preview-render OUT.wav [--no-soundfont]]");
+        print ("               [--velocity AMOUNT]     (research: velocities measured from the audio, 1 = full range)");
         print ("       atm-cli --resample-check     (alignment test, no model needed)");
         print ("       atm-cli --tempo-check        (synthetic click tracks, no model needed)");
         print ("       atm-cli --velocity-check     (synthetic tones at known levels, no model needed)");
@@ -669,6 +671,7 @@ int main (int argc, char* argv[])
     atm::CleanupSettings cleanup;
     juce::File previewOut;
     bool useSoundFont = true;
+    double velocityAmount = -1.0;   // negative: flat 100, as the plugin does
 
     for (int i = 1; i < argc; ++i)
     {
@@ -686,6 +689,8 @@ int main (int argc, char* argv[])
             previewOut = juce::File::getCurrentWorkingDirectory().getChildFile (argv[++i]);
         else if (arg == "--no-soundfont")
             useSoundFont = false;
+        else if (arg == "--velocity" && i + 1 < argc)
+            velocityAmount = juce::String (argv[++i]).getDoubleValue();
         else if (arg == "--quantize" && i + 1 < argc)
             cleanup.quantize = juce::String (argv[++i]).getDoubleValue() / 100.0;
         else if (arg == "--grid" && i + 1 < argc)
@@ -814,8 +819,25 @@ int main (int argc, char* argv[])
                                     juce::Time::getMillisecondCounterHiRes() - t1));
 
     // 5. Cleanup -- what the plugin shows and exports.
-    const auto cleaned = atm::cleanUp (notes, cleanup, est);
+    auto cleaned = atm::cleanUp (notes, cleanup, est);
     print (juce::String::formatted ("cleanup:  quantize %.0f%% %s", cleanup.quantize * 100.0, atm::gridName (cleanup.grid).toRawUTF8()));
+
+    // 5b. Research: velocities measured from the audio, scaled by `amount`
+    //     around 80 (1 = the full 40..120 mapping, 0 = flat 80).
+    std::vector<float> levels;
+    if (velocityAmount >= 0.0)
+    {
+        levels = atm::measureLevels (audio, notes);
+        const auto mapped = atm::velocitiesFromLevels (notes, levels);
+        int lo = 127, hi = 1;
+        for (size_t i = 0; i < cleaned.size() && i < mapped.size(); ++i)
+        {
+            cleaned[i].velocity = juce::jlimit (1, 127, juce::roundToInt (80.0 + (mapped[i] - 80) * velocityAmount));
+            lo = juce::jmin (lo, cleaned[i].velocity);
+            hi = juce::jmax (hi, cleaned[i].velocity);
+        }
+        print (juce::String::formatted ("velocity: measured, amount %.2f -> %d..%d", velocityAmount, lo, hi));
+    }
 
     atm::ExportTiming timing;
     timing.hostBpm = bpm;
@@ -974,6 +996,51 @@ int main (int argc, char* argv[])
             allOk = allOk && worst < 0.002 && (cleanup.quantize < 1.0 || onGrid == noteOns);
         }
 
+        // Every layer in one file (the "all" chip): one track per layer, in
+        // order, each on a channel of its own (drums on 10), with exactly the
+        // note-ons of that layer's own file at the same ticks.
+        if (perLayer.size() >= 2)
+        {
+            std::vector<int> keys;
+            for (const auto& [layer, count] : perLayer)
+                keys.push_back (layer);
+
+            const auto out = midiDir.getChildFile (atm::layersMidiFileName (audio.fileName, (int) keys.size(), true));
+            bool ok = atm::writeMidiFile (atm::buildLayersMidi (cleaned, keys, timing), out);
+
+            juce::MidiFile all;
+            {
+                juce::FileInputStream in (out);
+                ok = ok && all.readFrom (in) && all.getNumTracks() == (int) keys.size();
+            }
+
+            std::set<int> channels;
+            int matched = 0;
+            for (int t = 0; ok && t < all.getNumTracks(); ++t)
+            {
+                juce::MidiFile single;
+                juce::FileInputStream in (midiDir.getChildFile (atm::layerMidiFileName (audio.fileName, keys[(size_t) t])));
+                single.readFrom (in);
+
+                std::vector<std::pair<double, int>> a, b;
+                int channel = -1;
+                for (const auto* m : *all.getTrack (t))
+                    if (m->message.isNoteOn()) { a.push_back ({ m->message.getTimeStamp(), m->message.getNoteNumber() }); channel = m->message.getChannel(); }
+                for (const auto* m : *single.getTrack (0))
+                    if (m->message.isNoteOn()) b.push_back ({ m->message.getTimeStamp(), m->message.getNoteNumber() });
+
+                const bool drums = keys[(size_t) t] == atm::kDrumLayer;
+                ok = ok && a == b && (drums ? channel == 10 : channel != 10) && channels.insert (channel).second;
+                matched += a == b ? 1 : 0;
+            }
+
+            print (juce::String::formatted ("midi:     %-44s %d tracks, %d/%d identical to their own files, channels %s: %s",
+                                            out.getFileName().toRawUTF8(), all.getNumTracks(), matched, (int) keys.size(),
+                                            [&] { juce::StringArray c; for (const int ch : channels) c.add (juce::String (ch)); return c.joinIntoString (" "); }().toRawUTF8(),
+                                            ok ? "ok" : "WRONG"));
+            allOk = allOk && ok;
+        }
+
         if (! allOk)
             return 1;
     }
@@ -983,9 +1050,10 @@ int main (int argc, char* argv[])
     for (int i = 0; i < juce::jmin (notesToPrint, (int) notes.size()); ++i)
     {
         const auto& n = notes[(size_t) i];
+        const juce::String level = (size_t) i < levels.size() ? juce::String::formatted ("  level %6.1f dB  vel %3d", levels[(size_t) i], cleaned[(size_t) i].velocity) : juce::String();
         print (juce::String::formatted ("  %7.3f - %7.3f  pitch %3d  program %3d%s  %s", n.onset, n.offset, n.pitch,
                                         n.program, n.is_drum ? " drum" : "",
-                                        n.is_drum ? "drums" : atm::instrumentDisplayName (n.program).toRawUTF8()));
+                                        n.is_drum ? "drums" : atm::instrumentDisplayName (n.program).toRawUTF8()) + level);
     }
 
     return 0;

@@ -18,9 +18,6 @@ namespace
 {
     constexpr int kDrumLayer = 128;
 
-    // Velocity 100, like the export.
-    constexpr float kVelocity = 100.0f / 127.0f;
-
     // The bank's level against the original audio (normalised to 0.9 peak):
     // a single piano note at velocity 100 peaks at -6.7 dBFS unscaled, and
     // chords stack. Calibrated with `atm-cli --preview-render` so the
@@ -142,11 +139,11 @@ SoundFontSynth::~SoundFontSynth()
         tsf_close (player);
 }
 
-void SoundFontSynth::noteOn (int layer, int pitch, bool drum)
+void SoundFontSynth::noteOn (int layer, int pitch, bool drum, int velocity)
 {
     const int preset = font->presetFor (drum ? kDrumLayer : layer);
     if (preset >= 0)
-        tsf_note_on (player, preset, pitch, kVelocity);
+        tsf_note_on (player, preset, pitch, (float) juce::jlimit (1, 127, velocity) / 127.0f);
 }
 
 void SoundFontSynth::noteOff (int layer, int pitch, bool drum)
