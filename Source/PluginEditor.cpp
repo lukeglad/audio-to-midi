@@ -36,8 +36,16 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     addAndMakeVisible (content);
     content.addAndMakeVisible (canvas);
     content.addAndMakeVisible (topBar);
+    content.addChildComponent (guide);   // last: on top of everything
 
     topBar.onModelClicked = [this] { showModelMenu(); };
+    topBar.onHelpClicked = [this]
+    {
+        if (guide.isOpen())
+            guide.close();
+        else
+            guide.open ({ &topBar, &canvas });
+    };
     topBar.onBpmChanged = [this] (double bpm) { processorRef.setBpm (bpm); };
     canvas.onQuantizeChanged = [this] (double amount)
     {
@@ -163,6 +171,7 @@ void AudioToMidiEditor::resized()
     topBar.setBounds (r.removeFromTop (20));
     r.removeFromTop (6);
     canvas.setBounds (r);
+    guide.setBounds (0, 0, cw, ch);
 }
 
 //==============================================================================

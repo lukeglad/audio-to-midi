@@ -45,6 +45,9 @@ public:
     juce::Component& getModelControl() noexcept { return modelButton; }
     std::function<void()> onModelClicked;
 
+    /** The "?" left of the model control: opens the quick guide. */
+    std::function<void()> onHelpClicked;
+
     std::function<void (double)> onBpmChanged;
 
     void paint (juce::Graphics&) override;
@@ -60,9 +63,18 @@ private:
         int getIdealWidth() const;
     };
 
+    // An outline Tabler glyph, resting 75%, hovered 100%.
+    struct IconButton : juce::Button
+    {
+        explicit IconButton (const juce::String& paths);
+        void paintButton (juce::Graphics&, bool isMouseOver, bool isButtonDown) override;
+        std::unique_ptr<juce::Drawable> icon;
+    };
+
     juce::String fileName, liveText;
     double lengthSeconds = 0.0;
     MenuButton modelButton;
+    IconButton helpButton { AudioFlowerIcons::kHelp };
 
     DragValue mixValue;
     bool hasFile = false;

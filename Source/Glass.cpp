@@ -46,17 +46,21 @@ namespace
         }
     }
 
-    juce::Path stadium (juce::Rectangle<float> r)
+    juce::Path roundedShape (juce::Rectangle<float> r, float radius)
     {
         juce::Path p;
-        p.addRoundedRectangle (r, juce::jmin (r.getWidth(), r.getHeight()) * 0.5f);
+        p.addRoundedRectangle (r, radius);
         return p;
     }
 }
 
 bool Glass::paint (juce::Graphics& g, juce::Component& component, juce::Rectangle<float> bounds,
-                   juce::Colour surface, std::optional<juce::Colour> rimColour)
+                   juce::Colour surface, std::optional<juce::Colour> rimColour, float cornerRadius)
 {
+    // A stadium is the rounded rectangle whose radius is half its short side.
+    const float radius = cornerRadius >= 0.0f ? juce::jmin (cornerRadius, juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f)
+                                              : juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
+
     auto* source = component.findParentComponentOfClass<GlassBackdrop>();
     auto* sourceComponent = dynamic_cast<juce::Component*> (source);
     if (source == nullptr || sourceComponent == nullptr)
@@ -90,17 +94,13 @@ bool Glass::paint (juce::Graphics& g, juce::Component& component, juce::Rectangl
 
     boxBlur (px, w, h, kBlur);
 
-    // Lens: inside the stadium, pixels near the rim read from further in,
-    // so what's behind bends at the edge like a droplet's.
+    // Lens: inside the shape, pixels near the rim read from further in, so
+    // what's behind bends at the edge like a droplet's. The shape is the
+    // core rectangle (the bounds shrunk by the radius) grown by the radius:
+    // a stadium's core is a line, a panel's a rectangle.
     const auto shape = (bounds + offset.toFloat()) - region.getPosition().toFloat();
-    const float rad = juce::jmin (shape.getWidth(), shape.getHeight()) * 0.5f;
-    const bool horizontal = shape.getWidth() >= shape.getHeight();
-    const juce::Point<float> a = horizontal ? juce::Point<float> (shape.getX() + rad, shape.getCentreY())
-                                            : juce::Point<float> (shape.getCentreX(), shape.getY() + rad);
-    const juce::Point<float> e = horizontal ? juce::Point<float> (shape.getRight() - rad, shape.getCentreY())
-                                            : juce::Point<float> (shape.getCentreX(), shape.getBottom() - rad);
-    const auto axis = e - a;
-    const float axisLen2 = axis.x * axis.x + axis.y * axis.y;
+    const float rad = radius;
+    const auto core = shape.reduced (rad);
     const float rimZone = juce::jmax (1.0f, juce::jmin (rad * 0.95f, 10.0f));
 
     juce::Image glass (juce::Image::ARGB, w, h, true);
@@ -110,14 +110,15 @@ bool Glass::paint (juce::Graphics& g, juce::Component& component, juce::Rectangl
             for (int x = 0; x < w; ++x)
             {
                 const juce::Point<float> p ((float) x + 0.5f, (float) y + 0.5f);
-                float t = axisLen2 > 0.0f ? ((p - a).x * axis.x + (p - a).y * axis.y) / axisLen2 : 0.0f;
-                t = juce::jlimit (0.0f, 1.0f, t);
-                const auto c = a + axis * t;
+                const juce::Point<float> c (juce::jlimit (core.getX(), core.getRight(), p.x),
+                                            juce::jlimit (core.getY(), core.getBottom(), p.y));
                 const auto d = p - c;
                 const float dist = std::sqrt (d.x * d.x + d.y * d.y);
                 if (dist > rad + 1.0f)
                     continue;
 
+                // Inside the core the nearest edge is a side, further than
+                // the radius: no bend there.
                 auto s = p;
                 const float edge = rad - dist;
                 if (edge < rimZone && dist > 0.0f)
@@ -132,7 +133,7 @@ bool Glass::paint (juce::Graphics& g, juce::Component& component, juce::Rectangl
             }
     }
 
-    const auto body = stadium (bounds);
+    const auto body = roundedShape (bounds, radius);
 
     g.saveState();
     g.reduceClipRegion (body);
@@ -155,7 +156,7 @@ bool Glass::paint (juce::Graphics& g, juce::Component& component, juce::Rectangl
 
     // The rim: a specular hairline, bright on top and fading down the
     // sides -- or a plain hairline in `rimColour` (the selected chip).
-    const auto rimPath = stadium (bounds.reduced (0.5f));
+    const auto rimPath = roundedShape (bounds.reduced (0.5f), juce::jmax (0.0f, radius - 0.5f));
     if (rimColour.has_value())
     {
         g.setColour (*rimColour);

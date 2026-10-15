@@ -99,6 +99,7 @@ target_sources (AudioToMidi PRIVATE
     Source/Chip.cpp
     Source/DragValue.cpp
     Source/Glass.cpp
+    Source/GuideOverlay.cpp
     Source/LayerChip.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
@@ -136,6 +137,49 @@ foreach (format AU VST3 Standalone)
         muscriptor_add_metal_library (AudioToMidi_${format})
     endif()
 endforeach()
+
+#===============================================================================
+# atm-ui: renders the real editor to PNGs (default and minimum size, with and
+# without the quick guide), so UI changes can be looked at without a host.
+juce_add_gui_app (atm-ui PRODUCT_NAME "atm-ui")
+juce_generate_juce_header (atm-ui)
+
+target_sources (atm-ui PRIVATE
+    ${ENGINE_SOURCES}
+    Source/AudioFlowerLookAndFeel.cpp
+    Source/Canvas.cpp
+    Source/Chip.cpp
+    Source/DragValue.cpp
+    Source/Glass.cpp
+    Source/GuideOverlay.cpp
+    Source/LayerChip.cpp
+    Source/PluginEditor.cpp
+    Source/PluginProcessor.cpp
+    Source/QuantizeControl.cpp
+    Source/TopBar.cpp
+    Source/Cli/atm-ui.cpp)
+
+target_include_directories (atm-ui PRIVATE Source external/TinySoundFont)
+
+target_compile_definitions (atm-ui PRIVATE
+    JucePlugin_Name="Audio to MIDI"
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+
+target_link_libraries (atm-ui
+    PRIVATE
+        AudioToMidiBinaryData
+        muscriptor_ggml
+        juce::juce_audio_utils
+        juce::juce_audio_formats
+        juce::juce_cryptography
+        juce::juce_dsp
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+muscriptor_add_metal_library (atm-ui)
 
 #===============================================================================
 # atm-cli: decode -> resample -> transcribe from a terminal, through the same

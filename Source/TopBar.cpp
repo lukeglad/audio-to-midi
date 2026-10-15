@@ -42,8 +42,28 @@ int TopBar::MenuButton::getIdealWidth() const
 }
 
 //==============================================================================
+TopBar::IconButton::IconButton (const juce::String& paths)
+    : juce::Button ("icon"), icon (AudioFlowerIcons::makeTablerIcon (paths))
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void TopBar::IconButton::paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown)
+{
+    if (icon != nullptr)
+        // 11 px tall, the height of the bar's capitals; drawWithin fits the
+        // glyph's own outline, so a 14 px box made it taller than the text.
+        icon->drawWithin (g, getLocalBounds().toFloat().withSizeKeepingCentre (11.0f, 11.0f),
+                          juce::RectanglePlacement::centred, (isMouseOver || isButtonDown) ? 1.0f : 0.75f);
+}
+
+//==============================================================================
 TopBar::TopBar()
 {
+    helpButton.setTooltip ("quick guide");
+    helpButton.onClick = [this] { if (onHelpClicked) onHelpClicked(); };
+    addAndMakeVisible (helpButton);
+
     setInterceptsMouseClicks (false, true);
 
     modelButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
@@ -130,8 +150,10 @@ void TopBar::setMix (bool has, float mix01)
 
 void TopBar::resized()
 {
-    modelButton.setBounds (getLocalBounds().removeFromRight (modelButton.getIdealWidth() + kSideInset)
-                               .withTrimmedRight (kSideInset));
+    // The "?" at the very right, the model control just left of it.
+    helpButton.setBounds (getWidth() - kSideInset - 14, 0, 18, getHeight());
+    modelButton.setBounds (helpButton.getX() - kSideInset - modelButton.getIdealWidth(), 0,
+                           modelButton.getIdealWidth(), getHeight());
 
     auto left = getLocalBounds().withTrimmedLeft (kSideInset);
 

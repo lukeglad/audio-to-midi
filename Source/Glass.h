@@ -40,11 +40,14 @@ namespace Glass
         Paints a glass stadium filling `bounds` (in `component`'s coordinates).
         `surface` is the surfaceAt() shade at the component's height.
         `rimColour`, if set, replaces the specular rim with a plain hairline
-        in that colour (the selected chip's copper).
+        in that colour (the selected chip's copper). `cornerRadius` makes it a
+        rounded rectangle instead of a stadium (the guide panel); negative
+        means a stadium.
 
         @return false when no backdrop could be found; the caller then draws
                 its flat fill as before.
     */
     bool paint (juce::Graphics&, juce::Component& component, juce::Rectangle<float> bounds,
-                juce::Colour surface, std::optional<juce::Colour> rimColour = std::nullopt);
+                juce::Colour surface, std::optional<juce::Colour> rimColour = std::nullopt,
+                float cornerRadius = -1.0f);
 }
