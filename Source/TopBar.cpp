@@ -160,9 +160,18 @@ void TopBar::paint (juce::Graphics& g)
 {
     if (liveText.isNotEmpty())
     {
-        g.setFont (LnF::uiFont (kTextSize));
+        // Centred like the file readout, and kept clear of the controls
+        // either side on a narrow window: cut with an ellipsis if it must.
+        const auto font = LnF::uiFont (kTextSize);
+        const float leftEdge  = (float) (hasTempo ? bpmValue.getRight() : hasFile ? mixValue.getRight() : 0) + (float) kSideInset;
+        const float rightEdge = (float) (modelButton.getX() - kSideInset);
+        const float textW     = juce::jmin (rightEdge - leftEdge, juce::GlyphArrangement::getStringWidth (font, liveText) + 1.0f);
+        const float x         = juce::jlimit (leftEdge, juce::jmax (leftEdge, rightEdge - textW), ((float) getWidth() - textW) * 0.5f);
+
+        g.setFont (font);
         g.setColour (LnF::accent());
-        g.drawText (liveText, getLocalBounds(), juce::Justification::centred, false);
+        g.drawText (liveText, juce::Rectangle<float> (x, 0.0f, juce::jmax (0.0f, textW), (float) getHeight()),
+                    juce::Justification::centredLeft, true);
         return;
     }
 

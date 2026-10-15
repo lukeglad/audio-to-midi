@@ -56,6 +56,10 @@ public:
         else gets a dim outline and "audio files only" rather than nothing. */
     void setDragHover (bool isHovering, bool acceptable = true);
     void setWordmarkTypeface (juce::Typeface::Ptr);
+
+    /** How octaves are numbered on the keys and in the hover readout: the
+        host's own convention, so "C5" means the same here as in FL. */
+    void setMiddleCOctave (int);
     void setStatus (const Status&);
 
     /** Where the transcription has got to, in seconds; negative hides the line. */
@@ -228,6 +232,7 @@ private:
     bool scrubbing = false;   // a press that began in the band or ruler
     std::optional<atm::TempoEstimate> grid;
     int gridDivisions = 4;   // lines per beat: the quantize grid (1/16 = 4)
+    int middleCOctave = 4;
     Chip actionChip;
 
     int runId = -1;

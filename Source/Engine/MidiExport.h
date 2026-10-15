@@ -14,8 +14,10 @@ namespace atm
     /** "acoustic guitar", "drums", "program 97". */
     juce::String layerName (int layerKey);
 
-    /** "C4" for 60 (scientific pitch: middle C is C4). */
-    juce::String pitchName (int midiNote);
+    /** "C4" for 60 with `middleCOctave` 4 (scientific pitch). DAWs number
+        octaves differently: FL calls 60 C5, Ableton, Logic, Cubase and most
+        others C3. */
+    juce::String pitchName (int midiNote, int middleCOctave = 4);
 
     //==========================================================================
     // MIDI.

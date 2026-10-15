@@ -154,6 +154,15 @@ void Canvas::setDragHover (bool isHovering, bool acceptable)
     repaint();
 }
 
+void Canvas::setMiddleCOctave (int octave)
+{
+    if (octave == middleCOctave)
+        return;
+
+    middleCOctave = octave;
+    repaint();
+}
+
 void Canvas::setWordmarkTypeface (juce::Typeface::Ptr face)
 {
     wordmarkTypeface = std::move (face);
@@ -936,7 +945,7 @@ void Canvas::paintKeys (juce::Graphics& g) const
         {
             g.setColour (gap);
             g.setFont (LnF::uiFont (juce::jlimit (8.0f, 11.0f, rowH + 2.0f)));
-            g.drawText (atm::pitchName (p), juce::Rectangle<float> (keys.getX(), y + rowH - 12.0f, keys.getWidth() - 3.0f, 12.0f),
+            g.drawText (atm::pitchName (p, middleCOctave), juce::Rectangle<float> (keys.getX(), y + rowH - 12.0f, keys.getWidth() - 3.0f, 12.0f),
                         juce::Justification::bottomRight, false);
         }
     }
@@ -1028,7 +1037,7 @@ void Canvas::paintHoverInfo (juce::Graphics& g) const
                                                              : (layer->count == 1 ? " note" : " notes"));
     const auto dash = juce::String (juce::CharPointer_UTF8 ("\xE2\x80\x93"));
     if (! drums)
-        text += kDot + atm::pitchName (layer->lowest) + dash + atm::pitchName (layer->highest);
+        text += kDot + atm::pitchName (layer->lowest, middleCOctave) + dash + atm::pitchName (layer->highest, middleCOctave);
 
     g.setFont (LnF::uiFont (12.0f));
     g.setColour (LnF::ink().withAlpha (kAlphaSecondary));

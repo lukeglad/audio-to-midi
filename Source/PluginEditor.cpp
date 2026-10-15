@@ -23,6 +23,16 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
     canvas.setWordmarkTypeface (juce::Typeface::createSystemTypefaceFor (
         BinaryData::IndieFlowerRegular_ttf, (size_t) BinaryData::IndieFlowerRegular_ttfSize));
 
+    // Octaves named the way the host names them: FL calls middle C "C5",
+    // most DAWs "C3"; the standalone and anything unknown use C4.
+    {
+        const juce::PluginHostType host;
+        canvas.setMiddleCOctave (host.isFruityLoops() ? 5
+                                 : (host.isAbletonLive() || host.isLogic() || host.isGarageBand() || host.isCubase()
+                                    || host.isNuendo() || host.isStudioOne() || host.isBitwigStudio() || host.isProTools()) ? 3
+                                 : 4);
+    }
+
     addAndMakeVisible (content);
     content.addAndMakeVisible (canvas);
     content.addAndMakeVisible (topBar);

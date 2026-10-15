@@ -11,10 +11,10 @@ juce::String layerName (int layerKey)
     return layerKey == kDrumLayer ? juce::String ("drums") : instrumentDisplayName (layerKey);
 }
 
-juce::String pitchName (int midiNote)
+juce::String pitchName (int midiNote, int middleCOctave)
 {
     static const char* names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-    return juce::String (names[midiNote % 12]) + juce::String (midiNote / 12 - 1);
+    return juce::String (names[midiNote % 12]) + juce::String (midiNote / 12 - 5 + middleCOctave);
 }
 
 int ExportTiming::leadInBeats() const noexcept
