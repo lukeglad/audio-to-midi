@@ -7,6 +7,7 @@ namespace
 {
     constexpr float kTextSize = 14.0f;
     constexpr int   kSideInset = 10;
+    constexpr int   kHelpCentreX = 16;   // "?" ~13 px in from the left: mirrors the model chevron's inset on the right
 
     juce::String formatLength (double seconds)
     {
@@ -21,13 +22,21 @@ void TopBar::MenuButton::paintButton (juce::Graphics& g, bool isMouseOver, bool 
     const auto r = getLocalBounds().toFloat();
     const float alpha = (isMouseOver || isButtonDown) ? 1.0f : 0.75f;
 
+    const auto font = LnF::uiFont (kTextSize);
     g.setColour (LnF::ink().withAlpha (alpha));
-    g.setFont (LnF::uiFont (kTextSize));
+    g.setFont (font);
     g.drawText (getButtonText(), r.withTrimmedRight (14.0f), juce::Justification::centredLeft, false);
 
-    // Tabler chevron-down proportions, same 1.2 px stroke as the house ComboBox.
-    const float w = 8.0f, h = 4.0f;
-    const float cx = r.getRight() - 6.0f, cy = r.getCentreY();
+    // Tabler chevron-down proportions, same 1.2 px stroke as the house
+    // ComboBox, sized and centred for LOWERCASE text: "model" has no tall
+    // letters, so a chevron centred on the whole line sat level with the
+    // tops of the letters and read as too big. Centred on an "x" instead.
+    juce::GlyphArrangement x;
+    x.addLineOfText (font, "x", 0.0f, 0.0f);
+    const auto xBox = x.getBoundingBox (0, 1, true);
+    const float baseline = r.getCentreY() - font.getHeight() * 0.5f + font.getAscent();
+    const float w = 6.5f, h = 3.25f;
+    const float cx = r.getRight() - 6.0f, cy = baseline + xBox.getCentreY();
     juce::Path chevron;
     chevron.startNewSubPath (cx - w * 0.5f, cy - h * 0.5f);
     chevron.lineTo          (cx,            cy + h * 0.5f);
@@ -97,9 +106,11 @@ void TopBar::setModelLabel (const juce::String& label)
 
 void TopBar::resized()
 {
-    // The "?" at the very right, the model control just left of it.
-    helpButton.setBounds (getWidth() - kSideInset - 14, 0, 18, getHeight());
-    modelButton.setBounds (helpButton.getX() - kSideInset - modelButton.getIdealWidth(), 0,
+    // The "?" at the far left and the model control at the far right, the
+    // same distance in from each edge (user's pick over centring the "?"
+    // on the play and record pills, mockups/help-placement.html).
+    helpButton.setBounds (kHelpCentreX - 9, 0, 18, getHeight());
+    modelButton.setBounds (getWidth() - kSideInset - modelButton.getIdealWidth(), 0,
                            modelButton.getIdealWidth(), getHeight());
 
 }
@@ -120,7 +131,7 @@ void TopBar::paint (juce::Graphics& g)
         // Centred like the file readout, and kept clear of the controls
         // either side on a narrow window: cut with an ellipsis if it must.
         const auto font = LnF::uiFont (kTextSize);
-        const float leftEdge  = (float) kSideInset;
+        const float leftEdge  = (float) (helpButton.getRight() + kSideInset);
         const float rightEdge = (float) (modelButton.getX() - kSideInset);
         const float textW     = juce::jmin (rightEdge - leftEdge, juce::GlyphArrangement::getStringWidth (font, liveText) + 1.0f);
         const float x         = juce::jlimit (leftEdge, juce::jmax (leftEdge, rightEdge - textW), ((float) getWidth() - textW) * 0.5f);
@@ -146,7 +157,7 @@ void TopBar::paint (juce::Graphics& g)
 
     // Centred on the bar when it fits, otherwise centred in the space left
     // between the controls either side, the name cut with an ellipsis.
-    const float leftEdge  = (float) kSideInset;
+    const float leftEdge  = (float) (helpButton.getRight() + kSideInset);
     const float rightEdge = (float) (modelButton.getX() - kSideInset);
     const float maxNameW  = juce::jmax (0.0f, rightEdge - leftEdge - gapW - lengthW);
     const float nameW     = juce::jmin (maxNameW, juce::GlyphArrangement::getStringWidth (font, fileName) + 1.0f);
