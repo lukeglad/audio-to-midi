@@ -6,6 +6,9 @@
 #   ./build.sh Debug      # Debug build of the same
 #   ./build.sh xcode      # generate an Xcode project in build-xcode/ instead
 #
+# JUCE is expected at ~/Documents/JUCE; JUCE_DIR=/path/to/JUCE ./build.sh
+# points it elsewhere (CMake remembers it for that build folder).
+#
 # CMake and Ninja come from .tools/, a project-local Python environment, so
 # nothing has to be installed system-wide. It is created on first run.
 set -euo pipefail
@@ -42,7 +45,7 @@ fi
 MODE="${1:-Release}"
 
 if [ "$MODE" = "xcode" ]; then
-  cmake -S . -B build-xcode -G Xcode
+  cmake -S . -B build-xcode -G Xcode ${JUCE_DIR:+-DJUCE_DIR="$JUCE_DIR"}
   echo "open build-xcode/AudioToMidi.xcodeproj"
   exit 0
 fi
@@ -53,7 +56,7 @@ case "$MODE" in
 esac
 
 BUILD_DIR="build/$MODE"
-cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$MODE"
+cmake -S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$MODE" ${JUCE_DIR:+-DJUCE_DIR="$JUCE_DIR"}
 cmake --build "$BUILD_DIR"
 
 echo
