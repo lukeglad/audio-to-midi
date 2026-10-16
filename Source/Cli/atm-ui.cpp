@@ -102,6 +102,18 @@ int main (int argc, char* argv[])
             };
             if (auto* viewport = findViewport (*guide))
             {
+                // What one scroll step costs: the area a scroll repaints,
+                // drawn at 2x like a retina screen, over 20 steps.
+                const auto area = editor->getLocalArea (viewport, viewport->getLocalBounds());
+                const double t0 = juce::Time::getMillisecondCounterHiRes();
+                for (int step = 0; step < 20; ++step)
+                {
+                    viewport->setViewPosition (0, step * 6);
+                    (void) editor->createComponentSnapshot (area, true, 2.0f);
+                }
+                print ("guide scroll paint " + tag + ": "
+                       + juce::String ((juce::Time::getMillisecondCounterHiRes() - t0) / 20.0, 1) + " ms per step");
+
                 viewport->setViewPosition (0, 1 << 20);
                 pump (100);
                 save (*editor, outDir.getChildFile ("guide-end-" + tag + ".png"));

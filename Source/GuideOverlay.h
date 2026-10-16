@@ -33,23 +33,60 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
 
 private:
-    /** The scrolled text: guide sections, the licence line, the credits. */
+    /** The scrolled text: guide sections, the licence line, the credits.
+        Laid out once per width and kept, so a scroll step only draws. */
     struct Sections final : juce::Component
     {
         void paint (juce::Graphics&) override;
+        void resized() override { layOut(); }
         static int idealHeight (int width);
+
+    private:
+        void layOut();
+
+        struct Item { juce::TextLayout layout; juce::Rectangle<float> area; };
+        std::vector<Item> items;
+        int ruleY = 0;
     };
 
-    /** The glass panel: paints the glass, the pinned title and the close cross. */
+    /** The glass panel: paints the glass, the pinned title and the close
+        cross. The glass is rendered once per open (the scene behind it is a
+        still snapshot) and kept as an image at the screen's pixel scale. */
     struct Panel final : juce::Component
     {
         explicit Panel (GuideOverlay& o) : owner (o) {}
         void paint (juce::Graphics&) override;
+        void resized() override { glass = {}; }
         void mouseUp (const juce::MouseEvent&) override;
-        void mouseMove (const juce::MouseEvent&) override { repaint(); }
-        void mouseExit (const juce::MouseEvent&) override { repaint(); }
+        void mouseMove (const juce::MouseEvent&) override { repaint (closeBounds().getSmallestIntegerContainer()); }
+        void mouseExit (const juce::MouseEvent&) override { repaint (closeBounds().getSmallestIntegerContainer()); }
         juce::Rectangle<float> closeBounds() const;
         GuideOverlay& owner;
+        juce::Image glass;
+        float glassScale = 0.0f;
+    };
+
+    /** Wheel scrolling without JUCE's whole-pixel steps: a trackpad moves the
+        text by exactly what it reports (fractions carried over), a notched
+        wheel glides to where it points instead of jumping. */
+    struct SmoothViewport final : juce::Viewport
+    {
+        void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+        void visibleAreaChanged (const juce::Rectangle<int>&) override;
+        void jumpToTop();
+
+    private:
+        void moveTo (double y);
+        double maxY() const;
+
+        double target = 0.0, current = 0.0;
+        bool moving = false, gliding = false;
+        juce::VBlankAttachment vblank { this, [this] {
+            if (! gliding) return;
+            current += (target - current) * 0.3;
+            if (std::abs (target - current) < 0.5) { current = target; gliding = false; }
+            moveTo (current);
+        } };
     };
 
     juce::Rectangle<int> panelBounds() const;
@@ -59,7 +96,7 @@ private:
     juce::Image backdrop;
 
     Panel panel { *this };
-    juce::Viewport viewport;
+    SmoothViewport viewport;
     Sections sections;
     juce::HyperlinkButton siteLink;
 

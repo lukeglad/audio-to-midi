@@ -76,13 +76,6 @@ namespace
         return (int) std::ceil (layoutFor (text, fontSize, {}, width).getHeight());
     }
 
-    /** Draws `text` wrapped at the top of `area` and takes its height off. */
-    void drawParagraph (juce::Graphics& g, juce::Rectangle<int>& area, const juce::String& text, float fontSize, juce::Colour colour)
-    {
-        const auto layout = layoutFor (text, fontSize, colour, area.getWidth());
-        layout.draw (g, area.removeFromTop ((int) std::ceil (layout.getHeight())).toFloat());
-    }
-
     int chromeHeight() { return kPadY * 2 + kTitleH + kTitleGap + kLinkGap + kLinkH; }
 
     /** Box blur of an ARGB image, in place, two passes per axis (≈ Gaussian).
@@ -139,45 +132,68 @@ int GuideOverlay::Sections::idealHeight (int width)
     return h - kSmallGap;
 }
 
-void GuideOverlay::Sections::paint (juce::Graphics& g)
+void GuideOverlay::Sections::layOut()
 {
-    // No background: the glass panel behind already painted it.
-    auto body = getLocalBounds();
+    items.clear();
+    const int width = getWidth();
+    if (width <= 0)
+        return;
+
+    float y = 0.0f;
+    const auto add = [&] (const juce::AttributedString& as, float boxH, bool centred)
+    {
+        juce::TextLayout layout;
+        layout.createLayout (as, (float) width);
+        const float h = boxH > 0.0f ? boxH : std::ceil (layout.getHeight());
+        const float top = centred ? y + (h - layout.getHeight()) * 0.5f : y;
+        items.push_back ({ std::move (layout), { 0.0f, top, (float) width, h } });
+        y += h;
+    };
+    const auto text = [] (const juce::String& t, float size, juce::Colour c)
+    {
+        juce::AttributedString as;
+        as.append (t, LnF::uiFont (size), c);
+        return as;
+    };
 
     for (const auto& s : kSections)
     {
-        g.setColour (LnF::ink().withAlpha (0.95f));
-        g.setFont (LnF::uiFont (kHeadingFont));
-        g.drawText (s.heading, body.removeFromTop (kHeadingH), juce::Justification::centredLeft);
-
-        drawParagraph (g, body, s.body, kBodyFont, LnF::ink().withAlpha (0.75f));
-        body.removeFromTop (kSectionGap);
+        add (text (s.heading, kHeadingFont, LnF::ink().withAlpha (0.95f)), (float) kHeadingH, true);
+        add (text (s.body, kBodyFont, LnF::ink().withAlpha (0.75f)), 0.0f, false);
+        y += (float) kSectionGap;
     }
 
     // The licence line, set small: a condition, not a feature.
-    drawParagraph (g, body, kLicence, kSmallFont, LnF::ink().withAlpha (0.55f));
+    add (text (kLicence, kSmallFont, LnF::ink().withAlpha (0.55f)), 0.0f, false);
 
     // The credits, quieter than the guide, under a hairline.
-    body.removeFromTop (kCreditsRuleGap);
-    g.setColour (LnF::ink().withAlpha (0.16f));
-    g.drawHorizontalLine (body.getY(), (float) body.getX(), (float) body.getRight());
-    body.removeFromTop (kCreditsRuleGap);
+    y += (float) kCreditsRuleGap;
+    ruleY = (int) y;
+    y += (float) kCreditsRuleGap;
 
-    g.setColour (LnF::ink().withAlpha (0.6f));
-    g.setFont (LnF::uiFont (12.0f));
-    g.drawText ("Made with", body.removeFromTop (kSmallHeadingH), juce::Justification::topLeft);
+    add (text ("Made with", 12.0f, LnF::ink().withAlpha (0.6f)), (float) kSmallHeadingH, false);
 
     for (const auto& c : kCredits)
     {
         juce::AttributedString as;
         as.append (juce::String (c.heading) + ". ", LnF::uiFont (kSmallFont), LnF::ink().withAlpha (0.75f));
         as.append (c.body, LnF::uiFont (kSmallFont), LnF::ink().withAlpha (0.5f));
-        juce::TextLayout layout;
-        layout.createLayout (as, (float) body.getWidth());
-        const int h = (int) std::ceil (layout.getHeight());
-        layout.draw (g, body.removeFromTop (h).toFloat());
-        body.removeFromTop (kSmallGap);
+        add (as, 0.0f, false);
+        y += (float) kSmallGap;
     }
+}
+
+void GuideOverlay::Sections::paint (juce::Graphics& g)
+{
+    // No background: the glass panel behind already painted it. Only what
+    // the scroll step uncovered is drawn.
+    const auto clip = g.getClipBounds().toFloat();
+    for (const auto& item : items)
+        if (item.area.intersects (clip))
+            item.layout.draw (g, item.area.withHeight (item.layout.getHeight()));
+
+    g.setColour (LnF::ink().withAlpha (0.16f));
+    g.drawHorizontalLine (ruleY, 0.0f, (float) getWidth());
 }
 
 //==============================================================================
@@ -189,16 +205,29 @@ juce::Rectangle<float> GuideOverlay::Panel::closeBounds() const
 void GuideOverlay::Panel::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat();
-    const auto surface = LnF::surfaceAt (LnF::background(), 0.5f);
 
-    if (! Glass::paint (g, *this, r, surface, std::nullopt, kCornerRadius))
+    // The glass and its veil, from the image made the first time (blurring
+    // and bending the backdrop every scroll step cost ~40 ms a step).
+    const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (! glass.isValid() || ! juce::approximatelyEqual (scale, glassScale))
     {
-        g.setColour (LnF::background());
-        g.fillRoundedRectangle (r, kCornerRadius);
-    }
+        glassScale = scale;
+        glass = juce::Image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt (r.getWidth() * scale)),
+                             juce::jmax (1, juce::roundToInt (r.getHeight() * scale)), true);
+        juce::Graphics gg (glass);
+        gg.addTransform (juce::AffineTransform::scale (scale));
 
-    g.setColour (LnF::background().withAlpha (kPanelVeil));
-    g.fillRoundedRectangle (r.reduced (1.0f), kCornerRadius - 1.0f);
+        const auto surface = LnF::surfaceAt (LnF::background(), 0.5f);
+        if (! Glass::paint (gg, *this, r, surface, std::nullopt, kCornerRadius))
+        {
+            gg.setColour (LnF::background());
+            gg.fillRoundedRectangle (r, kCornerRadius);
+        }
+
+        gg.setColour (LnF::background().withAlpha (kPanelVeil));
+        gg.fillRoundedRectangle (r.reduced (1.0f), kCornerRadius - 1.0f);
+    }
+    g.drawImage (glass, r);
 
     // The pinned title.
     g.setColour (LnF::ink());
@@ -232,6 +261,9 @@ void GuideOverlay::Panel::mouseUp (const juce::MouseEvent& e)
 //==============================================================================
 GuideOverlay::GuideOverlay()
 {
+    // It paints every pixel (the snapshot, then the scrim), so nothing
+    // behind it is repainted when the text scrolls.
+    setOpaque (true);
     addAndMakeVisible (panel);
 
     viewport.setViewedComponent (&sections, false);
@@ -260,7 +292,7 @@ void GuideOverlay::open (std::vector<juce::Component*> behind)
     for (auto* c : behind)
         covered.emplace_back (c);
 
-    viewport.setViewPosition (0, 0);   // always from the top
+    viewport.jumpToTop();   // always from the top
     setVisible (true);
     toFront (false);
     takeSnapshot();
@@ -303,6 +335,63 @@ void GuideOverlay::takeSnapshot()
     juce::Graphics g (backdrop);
     g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
     g.drawImage (small, getLocalBounds().toFloat());
+
+    panel.glass = {};   // the glass bends the new backdrop
+}
+
+//==============================================================================
+double GuideOverlay::SmoothViewport::maxY() const
+{
+    const auto* content = getViewedComponent();
+    return content != nullptr ? juce::jmax (0, content->getHeight() - getMaximumVisibleHeight()) : 0.0;
+}
+
+void GuideOverlay::SmoothViewport::moveTo (double y)
+{
+    const juce::ScopedValueSetter<bool> ours (moving, true);
+    setViewPosition (getViewPositionX(), juce::roundToInt (y));
+}
+
+void GuideOverlay::SmoothViewport::jumpToTop()
+{
+    target = current = 0.0;
+    gliding = false;
+    moveTo (0.0);
+}
+
+void GuideOverlay::SmoothViewport::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    if (e.mods.isAltDown() || e.mods.isCtrlDown() || e.mods.isCommandDown() || ! getVerticalScrollBar().isVisible())
+    {
+        juce::Viewport::mouseWheelMove (e, wheel);
+        return;
+    }
+
+    // JUCE's own distance (14 × its 16 px step per wheel unit), unrounded.
+    const double distance = (double) wheel.deltaY * 14.0 * 16.0;
+    target = juce::jlimit (0.0, maxY(), target - distance);
+
+    if (wheel.isSmooth)
+    {
+        // A trackpad already eases (and carries momentum): follow it exactly.
+        current = target;
+        gliding = false;
+        moveTo (current);
+    }
+    else
+    {
+        gliding = true;   // the vblank callback eases toward the target
+    }
+}
+
+void GuideOverlay::SmoothViewport::visibleAreaChanged (const juce::Rectangle<int>& area)
+{
+    // Moved by something else (the scrollbar thumb, a resize): start from there.
+    if (! moving)
+    {
+        target = current = area.getY();
+        gliding = false;
+    }
 }
 
 juce::Rectangle<int> GuideOverlay::panelBounds() const
