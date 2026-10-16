@@ -64,6 +64,13 @@ juce_add_plugin (AudioToMidi
     PRODUCT_NAME                "Audio to MIDI"
     VERSION                     1.0.0
     DESCRIPTION                 "Turns an audio file into DAW-ready MIDI, one clip per instrument"
+    # The standalone app's icon: a corner of the piano roll in the house
+    # colours. ICON_BIG is the drawing with its own shape (Resources/
+    # AppIcon.svg, rendered with qlmanage -t -s 1024); on macOS 26 the app
+    # uses the Icon Composer version instead (see AppIcon.icon below), and
+    # CFBundleIconName is what points macOS 26 at it.
+    ICON_BIG                    Resources/AppIcon.png
+    PLIST_TO_MERGE              "<plist><dict><key>CFBundleIconName</key><string>AppIcon</string></dict></plist>"
     COMPANY_NAME                AudioFlower
     COMPANY_WEBSITE             "https://audioflower.art"
     COMPANY_EMAIL               "luke@audioflower.art"
@@ -143,6 +150,23 @@ foreach (format AU VST3 Standalone)
         muscriptor_add_metal_library (AudioToMidi_${format})
     endif()
 endforeach()
+
+# The app icon for macOS 26: Resources/AppIcon.icon is the Icon Composer
+# original (two full-bleed layers: the ground with the keys, and the notes).
+# actool compiles it into Assets.car, from which macOS 26 draws the shape and
+# highlights itself (an icon that brings its own shape is shrunk into a grey
+# frame there), and into an AppIcon.icns for older macOS that replaces the one
+# made from ICON_BIG. JUCE's ICON_COMPOSER_BUNDLE does this too, but only
+# under the Xcode generator (8.0.13 fails to configure with Ninja).
+if (TARGET AudioToMidi_Standalone)
+    add_custom_command (TARGET AudioToMidi_Standalone POST_BUILD
+        COMMAND xcrun actool --compile "$<TARGET_BUNDLE_CONTENT_DIR:AudioToMidi_Standalone>/Resources"
+                             --platform macosx --minimum-deployment-target 11.0
+                             --output-partial-info-plist "${CMAKE_CURRENT_BINARY_DIR}/AppIcon-partial.plist"
+                             --app-icon AppIcon "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.icon"
+        COMMENT "Compiling the app icon"
+        VERBATIM)
+endif()
 
 #===============================================================================
 # atm-ui: renders the real editor to PNGs (default and minimum size, with and
