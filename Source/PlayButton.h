@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "AudioFlowerLookAndFeel.h"
+#include "Glass.h"
 
 //==============================================================================
 /**
@@ -27,8 +28,11 @@ public:
         if (shouldShowStop != playing) { playing = shouldShowStop; repaint(); }
     }
 
-    /** Glyph size; the button's bounds can be larger, as a hit area. */
-    static constexpr float kGlyphSize = 26.0f;
+    /** Glyph size, in its pill. */
+    static constexpr float kGlyphSize = 17.6f;   // play ~12 px tall: a triangle reads smaller than the 10 px record dot
+
+    /** The shade its glass pill is tinted with (surfaceAt its height). */
+    void setSurfaceColour (juce::Colour c) { if (c != surface) { surface = c; repaint(); } }
 
 private:
     // Both shapes in a 24x24 box, as in the mockup.
@@ -50,29 +54,47 @@ private:
     static juce::Path stopShape()
     {
         juce::Path p;
-        // 13.5 units, centred: optically the same size as the play
-        // triangle, which spans ~16 units tall with its rounding stroke.
-        p.addRoundedRectangle (5.25f, 5.25f, 13.5f, 13.5f, 0.9f);
+        // 12.25 units, centred (~9 px): a square reads larger than the
+        // record dot it sits above, so it stays a touch narrower than 10.
+        p.addRoundedRectangle (5.875f, 5.875f, 12.25f, 12.25f, 1.0f);
         return p;
     }
 
     void paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown) override
     {
+        // Its own glass pill (user's pick 2026-10-15, "two pills" in
+        // mockups/play-record-bubbles.html), with a flat fallback.
+        const auto pill = getLocalBounds().toFloat();
+        if (! Glass::paint (g, *this, pill, surface))
+        {
+            g.setColour (surface);
+            g.fillRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f);
+            g.setColour (AudioFlowerLookAndFeel::ink().withAlpha (0.40f));
+            g.drawRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f, 1.0f);
+        }
+
         const auto box = getLocalBounds().toFloat().withSizeKeepingCentre (kGlyphSize, kGlyphSize);
         const float scale = kGlyphSize / 24.0f;
         auto shape = playing ? stopShape() : playShape();
         shape.applyTransform (juce::AffineTransform::scale (scale).translated (box.getX(), box.getY()));
 
-        g.setColour (AudioFlowerLookAndFeel::ink().withAlpha ((isMouseOver || isButtonDown) ? 1.0f : 0.75f));
-        g.fillPath (shape);
+        // Dimmed, not hidden, with nothing to play: the pill keeps its place.
+        const float alpha = ! isEnabled() ? 0.25f : (isMouseOver || isButtonDown) ? 1.0f : 0.75f;
 
-        // A matching stroke rounds the play triangle's corners the way the
-        // mockup's did; the stop square keeps its edges crisp.
+        // Drawn opaque inside a layer that is then faded as a whole: the
+        // stroke that rounds the triangle's corners overlaps its fill, and
+        // two translucent coats made a brighter rim, so the play read as
+        // outlined next to the record dot's single fill.
+        g.beginTransparencyLayer (alpha);
+        g.setColour (AudioFlowerLookAndFeel::ink());
+        g.fillPath (shape);
         if (! playing)
             g.strokePath (shape, juce::PathStrokeType (1.5f * scale, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.endTransparencyLayer();
     }
 
     bool playing = false;
+    juce::Colour surface { AudioFlowerLookAndFeel::background() };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PlayButton)
 };

@@ -127,6 +127,28 @@ int main (int argc, char* argv[])
             tempo->hideEditor (true);
         }
 
+        // Record armed, then recording (no transport here, so it starts at
+        // once when audio flows), then stopped.
+        if (size.x == 960)
+        {
+            processor.toggleRecord();
+            pump (150);
+            save (*editor, outDir.getChildFile ("record-armed.png"));
+
+            juce::AudioBuffer<float> block (2, 512);
+            juce::MidiBuffer midi;
+            for (int b = 0; b < 40; ++b)
+            {
+                for (int i = 0; i < 512; ++i)
+                    block.setSample (0, i, 0.3f * std::sin ((float) (b * 512 + i) * 0.05f)), block.setSample (1, i, block.getSample (0, i));
+                processor.processBlock (block, midi);
+            }
+            pump (250);
+            save (*editor, outDir.getChildFile ("record-recording.png"));
+            processor.toggleRecord();
+            pump (600);
+        }
+
         // The model menu, opened the way a click opens it.
         std::function<TopBar* (juce::Component&)> findTopBar = [&] (juce::Component& c) -> TopBar*
         {

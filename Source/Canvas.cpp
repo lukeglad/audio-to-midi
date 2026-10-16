@@ -70,7 +70,8 @@ Canvas::Canvas()
     addChildComponent (allChip);
 
     playButton.onClick = [this] { if (onPlayClicked) onPlayClicked(); };
-    addChildComponent (playButton);
+    playButton.setEnabled (false);
+    addAndMakeVisible (playButton);
     recordButton.onClick = [this] { if (onRecordClicked) onRecordClicked(); };
     addAndMakeVisible (recordButton);
 
@@ -112,7 +113,7 @@ void Canvas::setSource (std::shared_ptr<const SourceAudio> newSource)
         return;
 
     source = std::move (newSource);
-    playButton.setVisible (source != nullptr);
+    playButton.setEnabled (source != nullptr);
     repaint();
 }
 
@@ -485,10 +486,14 @@ juce::Rectangle<float> Canvas::noteBounds (const atm::MidiNote& note) const
 //==============================================================================
 void Canvas::resized()
 {
-    // Play and record stacked in the band's corner above the keys.
-    const auto corner = juce::Rectangle<int> (0, 0, kKeysW + kTimeInset, kBandH).withSizeKeepingCentre (36, 36);
-    playButton.setBounds (corner.translated (0, -19));
-    recordButton.setBounds (corner.translated (0, 19));
+    // Two small glass pills stacked in the corner above the keys, play
+    // over record, centred as a pair.
+    const auto pair = juce::Rectangle<int> (0, 0, kKeysW + kTimeInset, kBandH).withSizeKeepingCentre (42, 26 * 2 + 7);
+    playButton.setBounds (pair.withHeight (26));
+    recordButton.setBounds (pair.withTrimmedTop (26 + 7));
+    const float h = (float) juce::jmax (1, getHeight());
+    playButton.setSurfaceColour (LnF::surfaceAt (LnF::background(), (float) playButton.getBounds().getCentreY() / h));
+    recordButton.setSurfaceColour (LnF::surfaceAt (LnF::background(), (float) recordButton.getBounds().getCentreY() / h));
 
     layoutChips();
     layoutActionChip();

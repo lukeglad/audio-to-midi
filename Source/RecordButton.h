@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "AudioFlowerLookAndFeel.h"
+#include "Glass.h"
 
 //==============================================================================
 /**
@@ -35,13 +36,32 @@ public:
         repaint();
     }
 
-    static constexpr float kDotSize = 15.0f;
+    static constexpr float kDotSize = 10.0f;   // in its pill, under play's
+
+    void setSurfaceColour (juce::Colour c) { if (c != surface) { surface = c; repaint(); } }
 
 private:
     void timerCallback() override { repaint(); }
 
     void paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown) override
     {
+        // Its own glass pill, which carries the state too: a copper rim when
+        // armed, a copper tint as well while recording.
+        const auto pill = getLocalBounds().toFloat();
+        const auto rim = state == State::idle ? std::optional<juce::Colour>() : std::optional (AudioFlowerLookAndFeel::accent());
+        if (! Glass::paint (g, *this, pill, surface, rim))
+        {
+            g.setColour (surface);
+            g.fillRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f);
+            g.setColour (rim.value_or (AudioFlowerLookAndFeel::ink().withAlpha (0.40f)));
+            g.drawRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f, 1.0f);
+        }
+        if (state == State::recording)
+        {
+            g.setColour (AudioFlowerLookAndFeel::accent().withAlpha (0.18f));
+            g.fillRoundedRectangle (pill.reduced (1.0f), pill.getHeight() * 0.5f - 1.0f);
+        }
+
         const auto dot = getLocalBounds().toFloat().withSizeKeepingCentre (kDotSize, kDotSize);
         const bool hot = isMouseOver || isButtonDown;
 
@@ -65,6 +85,7 @@ private:
     }
 
     State state = State::idle;
+    juce::Colour surface { AudioFlowerLookAndFeel::background() };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RecordButton)
 };

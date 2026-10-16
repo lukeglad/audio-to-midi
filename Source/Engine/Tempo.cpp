@@ -351,6 +351,32 @@ TempoEstimate estimateTempo (std::span<const float> samples16k, std::span<const 
         }
     }
 
+    // Bar 1 where the music starts. The first note's nearest beat is a
+    // downbeat; if the first note sits well off every beat the fit found
+    // (more than half a 16th: there was little rhythm to fit, like a
+    // sustained synth part's few chord changes), the beats move onto it. A
+    // first note that's merely played a little late keeps the fitted beats.
+    // A clip almost always starts on its downbeat; the user's typed tempo
+    // then keeps bar 1 there (setBpm leaves firstBeat alone).
+    if (! notes.empty())
+    {
+        double earliest = notes.front().onset;
+        for (const auto& note : notes)
+            earliest = juce::jmin (earliest, note.onset);
+
+        const double beatSeconds = 60.0 / result.bpm;
+        auto k = std::lround ((earliest - result.firstBeat) / beatSeconds);
+        const double off = earliest - (result.firstBeat + (double) k * beatSeconds);
+
+        if (std::abs (off) > beatSeconds / 8.0)
+        {
+            result.firstBeat = std::fmod (earliest, beatSeconds);
+            k = std::lround ((earliest - result.firstBeat) / beatSeconds);
+        }
+
+        result.downbeat = (int) (((k % result.beatsPerBar) + result.beatsPerBar) % result.beatsPerBar);
+    }
+
     // A beat a hair before the audio starts (within the export's grace) is
     // the audio's first beat: a loop cut on its downbeat, played a touch
     // late, would otherwise have its first bar counted as a pickup and the
