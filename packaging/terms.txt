@@ -1,0 +1,22 @@
+Audio to MIDI
+by AudioFlower (audioflower.art)
+
+In short:
+
+- Audio to MIDI is free and open source. Its code is licensed under the
+  GNU Affero General Public License v3; the full licence follows below.
+
+- The first time you transcribe, the plugin downloads the MuScriptor
+  transcription model by Kyutai and Mirelo. The model is licensed under
+  Creative Commons Attribution-NonCommercial 4.0: it is free for
+  non-commercial use only.
+
+- Only transcribe audio you have the rights to.
+
+- The preview sounds are GeneralUser GS by S. Christian Collins, installed
+  to /Library/Application Support/AudioFlower/soundfonts. The notices for
+  every library and asset the plugin uses are in THIRD-PARTY-NOTICES.md in
+  the source code, at github.com/lukeglad/audio-to-midi.
+
+- Audio to MIDI comes with no warranty, as the licence below explains.
+
