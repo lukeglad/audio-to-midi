@@ -32,16 +32,10 @@ GlassMenu* GlassMenu::find (juce::Component& from)
 
 void GlassMenu::showBelow (juce::Component& anchorComponent, Items newItems, std::function<void (int)> onResult, bool alignRight)
 {
-    open (getLocalArea (&anchorComponent, anchorComponent.getLocalBounds()), true, alignRight, std::move (newItems), std::move (onResult));
+    open (getLocalArea (&anchorComponent, anchorComponent.getLocalBounds()), alignRight, std::move (newItems), std::move (onResult));
 }
 
-void GlassMenu::showAt (juce::Component& from, juce::Point<int> point, Items newItems, std::function<void (int)> onResult)
-{
-    const auto here = getLocalPoint (&from, point);
-    open ({ here.x, here.y, 0, 0 }, true, false, std::move (newItems), std::move (onResult));
-}
-
-void GlassMenu::open (juce::Rectangle<int> anchorHere, bool below, bool alignRight, Items newItems, std::function<void (int)> onResult)
+void GlassMenu::open (juce::Rectangle<int> anchorHere, bool alignRight, Items newItems, std::function<void (int)> onResult)
 {
     if (isVisible())
         finish (0);
@@ -49,7 +43,6 @@ void GlassMenu::open (juce::Rectangle<int> anchorHere, bool below, bool alignRig
     items = std::move (newItems);
     callback = std::move (onResult);
     anchor = anchorHere;
-    placeBelow = below;
     alignToRight = alignRight;
     panel.hovered = -1;
 

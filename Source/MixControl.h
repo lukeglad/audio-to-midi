@@ -5,8 +5,7 @@
 //==============================================================================
 /**
     The preview mix, at the bottom-left of the piano roll, mirroring the grid
-    pill at the bottom-right (user's pick 2026-10-15, from
-    mockups/transport-layouts.html):
+    pill at the bottom-right:
 
         audio  ━━━━━●  midi
 
@@ -24,7 +23,6 @@ public:
     static constexpr int kHeight = 22;
 
     void setValue (float mix01);
-    float getValue() const noexcept { return value; }
     void setSurfaceColour (juce::Colour);
 
     int getIdealWidth() const;

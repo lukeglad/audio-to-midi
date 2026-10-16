@@ -29,8 +29,8 @@ namespace
 
 juce::File soundFontFile()
 {
-    // The installer puts the bank in the machine-wide folder (user decision
-    // 2026-10-15: bundled, not downloaded); build.sh fetches it into the
+    // The installer puts the bank in the machine-wide folder (bundled, not
+    // downloaded, so the preview sounds right at once); build.sh fetches it into the
     // user's own folder on a development machine. The installer's copy wins.
     const auto inFolder = [] (juce::File::SpecialLocationType where)
     {

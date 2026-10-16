@@ -45,7 +45,6 @@ namespace atm
         /** The soundfont to play the notes through, from the next block on.
             Taken once: later calls are ignored. */
         void setSoundFont (std::shared_ptr<const SoundFont>);
-        bool hasSoundFont() const noexcept { return fontSynthReady.load(); }
 
         void play();
         void stop();
@@ -54,7 +53,6 @@ namespace atm
 
         bool isPlaying() const noexcept   { return playing.load(); }
         double getPosition() const noexcept;   // seconds
-        double getLength() const noexcept { return length.load(); }
 
         /** 0 = original audio only, 1 = notes only. Equal-power crossfade. */
         void setMix (float);
@@ -145,7 +143,7 @@ namespace atm
         std::atomic<double> playStartSeconds { 0.0 };
         std::atomic<int> seekGeneration { 0 };
         int seenSeekGeneration = 0;
-        std::atomic<float> mix { 1.0f };   // all notes by default (user's call 2026-10-15)
+        std::atomic<float> mix { 1.0f };   // all notes by default: hearing the MIDI is the point
 
         std::array<std::atomic<bool>, kLayerSlots> muted {}, soloed {};
         std::atomic<int> soloCount { 0 };

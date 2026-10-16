@@ -17,10 +17,10 @@ public:
 
 //==============================================================================
 /**
-    Liquid glass for the floating stadium surfaces (layer chips, the mute /
-    solo strip, the quantize label and fader, the action chip). Chosen
-    2026-10-13 from mockups/liquid-glass.html at its default settings; the
-    evolution of EQ's frost recipe.
+    Liquid glass for the floating surfaces: the layer chips, the mute / solo
+    strip, the mix and grid pills, the quantize fader, the play and record
+    pills, the action chip, the menus and the quick guide. The evolution of
+    EQ's frost recipe.
 
     What's behind is blurred lightly, bent near the rim like the edge of a
     droplet, shown through a light tint of the surface shade, and finished

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Configure and build the plugin.
 #
-#   ./build.sh            # Release: AU, VST3 and Standalone; the plugins are
-#                         # copied to ~/Library/Audio/Plug-Ins after building
+#   ./build.sh            # Release: AU, VST3 and Standalone, left in build/
+#                         # (to try them in a host: ./package.sh --skip-notarize)
 #   ./build.sh Debug      # Debug build of the same
 #   ./build.sh xcode      # generate an Xcode project in build-xcode/ instead
 #

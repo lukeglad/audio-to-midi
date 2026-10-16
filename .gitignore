@@ -22,3 +22,9 @@ test-audio/
 
 # Design mockups (throwaway HTML).
 mockups/
+
+# Installers and their build products (package.sh writes dist/).
+dist/
+
+# Screenshots rendered by atm-ui for checking UI changes.
+renders/

@@ -96,7 +96,7 @@ public:
     std::function<void (float mix01)> onMixChanged;
 
     /** The preview playhead, in seconds; negative hides it. Copper: the
-        brief's second reserved role for the accent. */
+        accent's second reserved role, after the selected layer. */
     void setPlayhead (double seconds);
 
     /** Preview state per layer, read when painting and refreshing chips. */

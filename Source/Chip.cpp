@@ -31,8 +31,8 @@ void Chip::paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown)
 {
     const auto r = getLocalBounds().toFloat().reduced (0.5f);
     const float radius = r.getHeight() * 0.5f;
-    // Hovered, held, or switched on (a toggling chip): the house "on" fill.
-    const bool hot = isMouseOver || isButtonDown || getToggleState();
+    // Hovered or held: the house "on" fill.
+    const bool hot = isMouseOver || isButtonDown;
 
     if (hot)
     {

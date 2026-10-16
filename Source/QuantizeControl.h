@@ -7,21 +7,17 @@
 //==============================================================================
 /**
     The grid pill, at the bottom-right of the piano roll: everything that
-    shapes the grid, together (tempo joined quantize here 2026-10-15, from
-    mockups/transport-layouts.html):
+    shapes the grid, together:
 
         126 BPM  ·  quantize  50%  1/16 ⌄
 
-    The tempo drags or double-clicks to type, like the percentage; a
-    recording's tempo is the host's and only reads.
-
-    on a faint surface-shaded backing (no hairline), so notes passing behind
-    don't make it unreadable. The percentage drags up/down or double-clicks
-    to type; the grid opens the house popup menu.
+    Liquid glass, so notes passing behind don't make it unreadable. The
+    tempo and the percentage drag up/down or double-click to type (a
+    recording's tempo is the host's and only reads); the grid opens a glass
+    menu.
 
     Hovering the percentage raises a QuantizeFader above it (the canvas owns
-    and positions that, since it reaches up over the roll). Chosen from
-    mockups/quantize-hover-fader.html on 2026-10-13.
+    and positions that, since it reaches up over the roll).
 */
 class QuantizeLabel : public juce::Component
 {
@@ -73,9 +69,9 @@ private:
 
 //==============================================================================
 /**
-    The fader that rises above the quantize percentage on hover: a slim house
-    stadium (40% ink hairline, surface-shaded) with a track that fills from
-    the bottom like a meter, so it doesn't read as a scrollbar. Drag it, or
+    The fader that rises above the quantize percentage on hover: a slim
+    liquid-glass stadium (a flat one without a backdrop) with a track that
+    fills from the bottom like a meter, so it doesn't read as a scrollbar. Drag it, or
     click a height to jump there.
 
     Its bounds include the gap down to the label, so the pointer never

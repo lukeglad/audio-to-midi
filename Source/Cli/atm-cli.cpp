@@ -719,6 +719,35 @@ namespace
         const bool finished3 = done.wait (5000);
         report ("silent take", finished3 && result.has_value() && result->silent, "reported as silent");
 
+        // 9. Sound on the right only (a mic in an interface's second input):
+        // the take plays from both sides. A real stereo take stays as it was.
+        const auto sideTake = [&] (float leftGain, float rightGain)
+        {
+            result.reset();
+            done.reset();
+            recorder.setArmed (true);
+            for (int b = 0; b < 200; ++b)
+            {
+                fill (0.6 + b * block / rate, true);
+                juce::FloatVectorOperations::multiply (in.getWritePointer (0), leftGain, block);
+                juce::FloatVectorOperations::multiply (in.getWritePointer (1), rightGain, block);
+                recorder.process (in, none);
+            }
+            recorder.stop();
+            return done.wait (5000) && result.has_value() && ! result->silent;
+        };
+        const bool rightOnly = sideTake (0.0f, 1.0f);
+        const int n = rightOnly ? result->samples.getNumSamples() : 0;
+        const float l = rightOnly ? result->samples.getRMSLevel (0, 0, n) : 0.0f;
+        const float r = rightOnly ? result->samples.getRMSLevel (1, 0, n) : 0.0f;
+        const bool copied = rightOnly && result->oneSided && l > 0.1f && std::abs (l - r) < 1.0e-6f;
+        const bool stereo = sideTake (1.0f, 0.5f) && ! result->oneSided
+                            && result->samples.getRMSLevel (1, 0, result->samples.getNumSamples())
+                                 < 0.6f * result->samples.getRMSLevel (0, 0, result->samples.getNumSamples());
+        report ("one side only", copied && stereo,
+                copied ? (stereo ? "copied to both sides; a stereo take left alone" : "a stereo take was changed")
+                       : "still on one side");
+
         return ok ? 0 : 1;
     }
 }

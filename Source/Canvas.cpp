@@ -178,7 +178,8 @@ void Canvas::setWordmarkTypeface (juce::Typeface::Ptr face)
 void Canvas::setStatus (const Status& newStatus)
 {
     if (newStatus.primary == status.primary && newStatus.secondary == status.secondary
-        && newStatus.action == status.action && juce::exactlyEqual (newStatus.primaryAlpha, status.primaryAlpha))
+        && newStatus.action == status.action && newStatus.accent == status.accent
+        && juce::exactlyEqual (newStatus.primaryAlpha, status.primaryAlpha))
         return;
 
     status = newStatus;
@@ -191,7 +192,8 @@ void Canvas::setGrid (std::optional<atm::TempoEstimate> newGrid)
     const bool same = grid.has_value() == newGrid.has_value()
         && (! grid.has_value()
             || (juce::exactlyEqual (grid->bpm, newGrid->bpm) && juce::exactlyEqual (grid->firstBeat, newGrid->firstBeat)
-                && grid->downbeat == newGrid->downbeat && grid->beatsPerBar == newGrid->beatsPerBar));
+                && grid->downbeat == newGrid->downbeat && grid->beatsPerBar == newGrid->beatsPerBar
+                && grid->firstBarNumber == newGrid->firstBarNumber));
     if (same)
         return;
 
@@ -683,7 +685,7 @@ void Canvas::paintScene (juce::Graphics& g)
     g.drawHorizontalLine (rollArea().getY(), 0.0f, bounds.getWidth());
 
     // Where the transcription has got to: a hairline through both sections.
-    // Ink, not copper -- copper is the selected layer (and later the playhead).
+    // Ink, not copper -- copper is the selected layer and the playhead.
     if (progressTime >= 0.0 && source != nullptr)
     {
         const float x = timeToX (progressTime);
@@ -766,7 +768,8 @@ void Canvas::paintWaveform (juce::Graphics& g) const
     outline.lineTo (area.getX(), bottoms.front());
     outline.closeSubPath();
 
-    // Brighter than the old under-the-notes ghost: the band is its own space now.
+    // The band is its own space, so the waveform can be brighter than a
+    // background texture would be.
     g.setColour (LnF::ink().withAlpha (0.28f));
     g.fillPath (outline);
 }
@@ -1037,7 +1040,7 @@ void Canvas::paintNotes (juce::Graphics& g) const
 void Canvas::paintHoverInfo (juce::Graphics& g) const
 {
     // Engaged mute / solo, as a dim word under each chip whose strip isn't
-    // showing -- the state stays visible without the glyphs.
+    // showing -- the state stays visible when the strip is closed.
     g.setFont (LnF::uiFont (10.0f));
     for (const auto& layer : layers)
     {

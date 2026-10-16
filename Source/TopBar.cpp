@@ -77,11 +77,6 @@ TopBar::TopBar()
     modelButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     modelButton.onClick = [this] { if (onModelClicked) onModelClicked(); };
     addAndMakeVisible (modelButton);
-
-
-
-
-
 }
 
 void TopBar::setFile (const juce::String& name, double seconds)
@@ -107,12 +102,10 @@ void TopBar::setModelLabel (const juce::String& label)
 void TopBar::resized()
 {
     // The "?" at the far left and the model control at the far right, the
-    // same distance in from each edge (user's pick over centring the "?"
-    // on the play and record pills, mockups/help-placement.html).
+    // same distance in from each edge, so the bar is symmetrical.
     helpButton.setBounds (kHelpCentreX - 9, 0, 18, getHeight());
     modelButton.setBounds (getWidth() - kSideInset - modelButton.getIdealWidth(), 0,
                            modelButton.getIdealWidth(), getHeight());
-
 }
 
 void TopBar::setLiveText (const juce::String& text)

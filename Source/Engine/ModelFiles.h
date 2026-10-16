@@ -11,8 +11,8 @@
     The model checkpoints: which exist, where they come from, and where they
     live on disk. Nothing here touches the engine.
 
-    Weights are not bundled with the plugin (the brief); they are downloaded
-    on demand into a folder shared by every AudioFlower plugin that might use
+    Weights are not bundled with the plugin (they are large, and licensed
+    separately: CC BY-NC 4.0); they are downloaded on demand into a folder shared by every AudioFlower plugin that might use
     them, so a renamed product never strands a 600 MB file.
 */
 namespace atm
@@ -25,7 +25,7 @@ namespace atm
     struct ModelInfo
     {
         ModelSize   size;
-        const char* name;        // "small" / "medium" / "large": UI text and the settings value
+        const char* name;        // "small" / "medium" / "large": the settings value and CLI argument
         const char* fileName;    // as published
         juce::int64 numBytes;
         const char* sha256;      // compiled in, so a changed upstream file fails instead of being trusted
@@ -53,18 +53,15 @@ namespace atm
         digest is only checked once, at download time. */
     bool isModelInstalled (ModelSize);
 
-    /** `preferred` if installed, else the default size, else any installed. */
-    std::optional<ModelSize> bestInstalledModel (ModelSize preferred);
-
     std::filesystem::path toPath (const juce::File&);
 
     //==========================================================================
-    // The chosen model is a per-user preference, not per-instance state: it
-    // says which file is installed, and every instance should agree.
     /** What the UI calls a size: the trade it makes, not the file it is
         (fast / balanced / best). Files and settings keep `name`. */
     const char* modelDisplayName (ModelSize);
 
+    // The chosen model is a per-user preference, not per-instance state: it
+    // says which file is installed, and every instance should agree.
     ModelSize preferredModel();
     void setPreferredModel (ModelSize);
 }

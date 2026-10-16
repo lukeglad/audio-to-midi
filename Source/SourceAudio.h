@@ -65,8 +65,8 @@ struct DecodeResult
     juce::String stateExtension;                 // "m4a", "flac", ...
 };
 
-/** Extensions the drop target accepts: the brief's list, plus the obvious
-    spellings of the same containers. m4a/aac/caf decode through macOS's own
+/** Extensions the drop target accepts: the common audio formats, plus the
+    obvious spellings of the same containers. m4a/aac/caf decode through macOS's own
     decoder (CoreAudioFormat), which is what reads iPhone voice memos. */
 bool isSupportedAudioFile (const juce::File&);
 

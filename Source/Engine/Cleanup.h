@@ -36,7 +36,7 @@ namespace atm
 
     /** Every note exports at this velocity. The model predicts none, and
         measuring it from the audio (Engine/Velocity, now CLI-only research)
-        was too rough on real mixes to ship -- decided 2026-10-12. */
+        was too rough on real mixes to ship. */
     inline constexpr int kDefaultVelocity = 100;
 
     //==========================================================================
@@ -63,7 +63,7 @@ namespace atm
         note keeps its length. No tempo, no quantize.
 
         (Chord tightening, key detection / snap to scale and measured
-        velocity were all built and then removed -- see the brief. The model
+        velocity were all built and then removed. The model
         already writes strums as block chords; its pitch errors are octaves
         and harmonics, not semitones; and velocity from a dense mix was too
         rough to be musical.)

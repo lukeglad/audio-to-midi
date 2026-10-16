@@ -99,21 +99,6 @@ bool isModelInstalled (ModelSize size)
     return modelFile (size).getSize() == modelInfo (size).numBytes;
 }
 
-std::optional<ModelSize> bestInstalledModel (ModelSize preferred)
-{
-    if (isModelInstalled (preferred))
-        return preferred;
-
-    if (isModelInstalled (kDefaultModelSize))
-        return kDefaultModelSize;
-
-    for (const auto size : kAllModelSizes)
-        if (isModelInstalled (size))
-            return size;
-
-    return std::nullopt;
-}
-
 std::filesystem::path toPath (const juce::File& file)
 {
     return { file.getFullPathName().toStdString() };

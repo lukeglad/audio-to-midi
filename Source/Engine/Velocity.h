@@ -9,7 +9,7 @@
 
 //==============================================================================
 // Velocity measurement: research code, used by atm-cli only. It was wired
-// into the plugin in build step 4b and taken out again the same day: on real
+// into the plugin once and taken out again: on real
 // mixes the per-note levels were too rough to sound musical, and flat
 // velocities are at least predictable. Kept so a better model has somewhere
 // to start (`atm-cli --velocity-check` still exercises it).

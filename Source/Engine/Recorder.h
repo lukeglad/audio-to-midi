@@ -49,10 +49,12 @@ namespace atm
             std::optional<HostTiming> host;     // where it began, adjusted for the trim; none without a transport
             bool silent = false;                // nothing above the threshold: `samples` is empty
             bool dropped = false;               // the drain fell behind and samples were lost
+            bool oneSided = false;              // sound on one side only: copied to both
         };
 
         static constexpr double kMaxSeconds = 15.0 * 60.0;
         static constexpr float kSilenceThreshold = 0.00316f;   // -50 dBFS
+        static constexpr float kOneSidedRatio = 0.01f;         // -40 dB: the other side is empty
         static constexpr double kPeakBucketSeconds = 0.02;
 
         Recorder();

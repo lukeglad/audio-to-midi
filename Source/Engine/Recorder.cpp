@@ -251,6 +251,19 @@ void Recorder::finish()
         result.samples.copyFrom (0, 0, left.data() + start, end - start);
         result.samples.copyFrom (1, 0, right.data() + start, end - start);
 
+        // A mono source on one side of a stereo input (a mic in input 2 of an
+        // interface, a mono synth on one channel) came back in one ear only.
+        // When one side is at least 40 dB below the other, the take is that
+        // one source: it's copied to both sides, as a DAW records a mono input.
+        const float rmsL = result.samples.getRMSLevel (0, 0, end - start);
+        const float rmsR = result.samples.getRMSLevel (1, 0, end - start);
+        if (juce::jmin (rmsL, rmsR) < juce::jmax (rmsL, rmsR) * kOneSidedRatio)
+        {
+            const int from = rmsL >= rmsR ? 0 : 1;
+            result.samples.copyFrom (1 - from, 0, result.samples, from, 0, end - start);
+            result.oneSided = true;
+        }
+
         if (startHasHost)
         {
             auto timing = startTiming;
@@ -259,6 +272,8 @@ void Recorder::finish()
         }
     }
 
+    if (result.oneSided)
+        juce::Logger::writeToLog ("recorder: sound on one side only, copied to both");
     if (result.dropped)
         juce::Logger::writeToLog ("recorder: " + juce::String (samplesDropped.load()) + " samples were dropped");
 

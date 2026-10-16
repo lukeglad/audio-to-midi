@@ -9,9 +9,9 @@
     The preview's play / stop, in the corner of the waveform band above the
     piano keys, next to the audio it plays.
 
-    Drawn here rather than taken from Tabler, and FILLED: a deliberate,
-    recorded exception to the house's outline-only icon rule (user decision
-    2026-10-13, option "E full" in mockups/play-glyphs.html). A soft-cornered
+    Drawn here rather than taken from Tabler, and FILLED: a deliberate
+    exception to the house's outline-only icon rule, since transport
+    controls read as solid shapes everywhere else. A soft-cornered
     triangle and a rounded square, solid ink at the resting 75%, full on
     hover. Every other glyph in the plugin stays outline.
 */
@@ -62,8 +62,7 @@ private:
 
     void paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonDown) override
     {
-        // Its own glass pill (user's pick 2026-10-15, "two pills" in
-        // mockups/play-record-bubbles.html), with a flat fallback.
+        // Its own glass pill (record has the one below), with a flat fallback.
         const auto pill = getLocalBounds().toFloat();
         if (! Glass::paint (g, *this, pill, surface))
         {

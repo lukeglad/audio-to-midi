@@ -36,8 +36,8 @@ namespace atm
         Conform off is only the fallback for when no tempo exists yet: real
         time at the host's tempo, tick 0 at the start of the audio.
 
-        With conform on, A lead-in of whole beats puts the
-        first downbeat on a bar line and keeps every note at or after tick 0.
+        With conform on, a lead-in of whole beats puts the first downbeat on
+        a bar line and keeps every note at or after tick 0.
         A file whose notes start on its first downbeat starts at bar 1; only a
         real pickup (notes before that downbeat) pushes it into the next bar.
     */

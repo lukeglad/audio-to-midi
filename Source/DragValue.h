@@ -19,7 +19,6 @@ public:
 
     void setRange (double min, double max, double unitsPerPixel);
     void setValue (double newValue, juce::NotificationType);
-    double getValue() const noexcept { return value; }
 
     std::function<juce::String (double)> format;
     std::function<double (const juce::String&)> parse;

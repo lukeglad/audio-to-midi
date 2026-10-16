@@ -35,16 +35,6 @@ namespace atm
         double beatAt (double seconds) const noexcept { return (seconds - firstBeat) / beatSeconds(); }
     };
 
-    /**
-        Estimates the tempo of 16 kHz mono audio. Onsets are read from the
-        signal (spectral flux); the model's notes, if given, sharpen them and
-        decide the downbeat. 40-240 BPM, with a prior around 110, so a march
-        and its half-time reading can both be answered either way: the UI's
-        half/double buttons exist for that.
-
-        Blocking (tens of milliseconds for a song). `shouldAbort` is polled;
-        an aborted call returns the default estimate with confidence 0.
-    */
     /** A tempo named in a file name, the way sample packs name loops:
         "loop_90bpm.wav", "Keys 128 BPM.wav" (`labelled`: say "bpm", so
         trusted) or a bare number token like Splice's "SP_SZ_154_piano.wav"
@@ -56,12 +46,23 @@ namespace atm
     };
     std::optional<NamedTempo> tempoFromFileName (const juce::String& fileName);
 
-    /** `named`, if given, is the file name's tempo: a labelled one is used
+    /**
+        Estimates the tempo of 16 kHz mono audio. Onsets are read from the
+        signal (spectral flux); the model's notes, if given, sharpen them and
+        decide the downbeat. 40-240 BPM, with a prior around 110; a march
+        and its half-time reading are both plausible, which is why typing
+        half or double the tempo re-places the downbeat (see setBpm).
+
+        `named`, if given, is the file name's tempo: a labelled one is used
         as is; a bare number only when the audio's own pulse is a simple
         multiple or fraction of it (a sparse loop otherwise reads a chord
-        per bar as a chord per beat: 39.7 BPM for a 154 BPM felt-piano loop,
-        2026-10-15). Either way the beats are then fitted to the audio at
-        exactly that tempo. */
+        per bar as a chord per beat: 39.7 BPM for a 154 BPM felt-piano
+        loop). Either way the beats are then fitted to the audio at exactly
+        that tempo.
+
+        Blocking (tens of milliseconds for a song). `shouldAbort` is polled;
+        an aborted call returns the default estimate with confidence 0.
+    */
     TempoEstimate estimateTempo (std::span<const float> samples16k, std::span<const msl::Note> notes,
                                  const std::function<bool()>& shouldAbort = {},
                                  std::optional<NamedTempo> named = std::nullopt);

@@ -1,6 +1,6 @@
 cmake_minimum_required (VERSION 3.24)
 
-# Apple Silicon only (decided 2026-10-12, see the brief). Set before project()
+# Apple Silicon only (the engine runs on the Apple GPU). Set before project()
 # so every target, including the transcription engine, builds for the one
 # architecture. The engine refuses a universal build anyway: ggml picks its CPU
 # kernels once per build tree.
@@ -10,7 +10,7 @@ set (CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "" FORCE)
 # floor; set here so it applies before the engine reads it.
 set (CMAKE_OSX_DEPLOYMENT_TARGET 11.0 CACHE STRING "")
 
-project (AudioToMidi VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
+project (AudioToMidi VERSION 1.0.0 LANGUAGES C CXX OBJC OBJCXX)
 
 # The engine's public headers use std::expected and need C++23.
 set (CMAKE_CXX_STANDARD 23)
@@ -62,7 +62,7 @@ juce_add_plugin (AudioToMidi
     # PLUGIN_MANUFACTURER_CODE are what hosts identify the plugin by, so they
     # must never change once a build is out.
     PRODUCT_NAME                "Audio to MIDI"
-    VERSION                     0.1.0
+    VERSION                     1.0.0
     DESCRIPTION                 "Turns an audio file into DAW-ready MIDI, one clip per instrument"
     COMPANY_NAME                AudioFlower
     COMPANY_WEBSITE             "https://audioflower.art"
@@ -85,7 +85,11 @@ juce_add_plugin (AudioToMidi
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT  "The standalone app records from your input device to transcribe it."
 
-    COPY_PLUGIN_AFTER_BUILD     TRUE)
+    # Off since the installer exists (2026-10-16): a build copied into
+    # ~/Library/Audio/Plug-Ins sat beside the installed one in /Library and
+    # the host saw the plugin twice. Test builds go through
+    # ./package.sh --skip-notarize instead, which tests the installer too.
+    COPY_PLUGIN_AFTER_BUILD     FALSE)
 
 juce_generate_juce_header (AudioToMidi)
 

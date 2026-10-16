@@ -1,6 +1,8 @@
 #include "PluginEditor.h"
-#include "BinaryData.h"
-#include "Engine/MidiExport.h"
+
+#if JucePlugin_Build_Standalone
+ #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#endif
 
 namespace
 {
@@ -19,6 +21,17 @@ AudioToMidiEditor::AudioToMidiEditor (AudioToMidiProcessor& p)
 {
     // The house face was injected by `houseFonts` (see the header).
     setLookAndFeel (&lookAndFeel);
+
+   #if JucePlugin_Build_Standalone
+    // JUCE's standalone mutes the input of anything that has both an input
+    // and an output, against a mic -> speakers feedback loop, and says so in
+    // a yellow bar. Ours never passes the input on in the standalone (see
+    // processBlock), so there is no loop, and the input is what recording
+    // captures: muted, a take would be silence.
+    if (p.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        if (auto* holder = juce::StandalonePluginHolder::getInstance())
+            holder->getMuteInputValue().setValue (false);
+   #endif
 
     canvas.setWordmarkTypeface (juce::Typeface::createSystemTypefaceFor (
         BinaryData::IndieFlowerRegular_ttf, (size_t) BinaryData::IndieFlowerRegular_ttfSize));
@@ -297,18 +310,15 @@ void AudioToMidiEditor::refreshFromProcessor()
     else
         topBar.setFile ({}, 0.0);
 
-    // The model control: the preferred model, with download progress while
-    // one is coming down.
-    const auto preferred = atm::preferredModel();
-    // Says what the control is; which model it's set to lives in its menu.
+    // The model control says what it is (which model is chosen lives in its
+    // menu), with download progress while one is coming down.
     juce::String modelLabel = "model";
-    juce::ignoreUnused (preferred);
     if (const auto busy = downloader.busySize())
         modelLabel += kDot + percent (downloader.status (*busy).progress());
     topBar.setModelLabel (modelLabel);
 
     // The status message: what's happening in plain words, with at most one
-    // action (mockups/first-launch-errors.html). A download shows whether or
+    // action and never a file path or server name. A download shows whether or
     // not audio is waiting for it; otherwise the transcription phase decides.
     Canvas::Status status;
     double progressTime = -1.0;

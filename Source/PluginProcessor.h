@@ -65,9 +65,10 @@ struct TempoState
 
 //==============================================================================
 /**
-    The instrument plugin. Owns the dropped audio and its transcription;
-    transcribes automatically whenever audio lands and a model is installed.
-    The preview synth and state recall of audio and notes come in later steps.
+    An effect on a mixer track: the input passes through (and can be
+    recorded), the preview plays on top. Owns the dropped or recorded audio
+    and its transcription, which starts automatically whenever audio lands;
+    the whole session (audio included) is saved with the host's project.
 
     All state here is message-thread only. Listeners (the editor) get a change
     message whenever something moves; the editor also polls for progress.
@@ -111,10 +112,6 @@ public:
     /** Starts decoding `file` in the background. A newer call supersedes an
         older decode that hasn't finished. Transcription follows automatically. */
     void loadFile (const juce::File& file);
-
-    /** What getStateInformation stores so the audio comes back without the
-        file. Null when the loaded file couldn't be encoded. */
-    std::shared_ptr<const juce::MemoryBlock> getStateAudio() const noexcept { return stateAudio; }
 
     /** The most recently loaded file, or null. Survives a failed or
         in-progress load of a newer one, so a bad drop never loses work. */
@@ -175,7 +172,7 @@ public:
     const TempoState& getTempo() const noexcept { return tempo; }
     /** The user's tempo. Landing on about half or double the tempo the grid
         was last aligned for re-places the downbeat so bar 1 stays on a real
-        beat (what the removed ½ / ×2 buttons did). */
+        beat (the usual fix for a detection off by a factor of two). */
     void setBpm (double bpm);
 
     //==========================================================================
@@ -217,7 +214,6 @@ private:
         std::vector<msl::Note> notes;
         bool complete = true;
         TempoState tempo;
-        atm::CleanupSettings cleanup;
         float mix = 1.0f;
         std::vector<int> muted, soloed;
         std::optional<atm::HostTiming> host;

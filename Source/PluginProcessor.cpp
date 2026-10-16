@@ -69,7 +69,7 @@ void AudioToMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         buffer.clear (ch, 0, numSamples);
 
     // The host's position: what a recording lines up with, and the tempo
-    // the MIDI export of a dropped file is written at.
+    // an export falls back to before a tempo has been detected.
     atm::HostPosition host;
     if (auto* playHead = getPlayHead())
         if (const auto position = playHead->getPosition())
@@ -99,6 +99,12 @@ void AudioToMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     // The input passes through untouched, and is what gets recorded.
     recorder.process (buffer, host);
+
+    // Except in the standalone: there the input is a microphone or an
+    // interface, and passing it on would play it out of the speakers (and
+    // back into the mic). It is recorded, never heard; only the preview plays.
+    if (wrapperType == wrapperType_Standalone)
+        buffer.clear();
 
     // The preview on top, only while it has something to play.
     if (previewBuffer.getNumChannels() >= numChannels && previewBuffer.getNumSamples() >= numSamples && numChannels > 0)
@@ -365,7 +371,6 @@ void AudioToMidiProcessor::setStateInformation (const void* data, int sizeInByte
         restore.soloed = splitInts (p.getProperty ("soloed", ""));
     }
 
-    restore.cleanup = cleanup;
     pendingRestore = std::move (restore);
 
     if (job != nullptr)
@@ -465,9 +470,11 @@ void AudioToMidiProcessor::finishLoad (int generation, DecodeResult result)
 
 void AudioToMidiProcessor::applyRestore (PendingRestore&& restore)
 {
-    // A session saved mid-transcription is simply run again.
+    // A session saved mid-transcription is simply run again (a new run
+    // starts with a fresh tempo and every layer audible), keeping the mix.
     if (! restore.complete)
     {
+        preview.setMix (restore.mix);
         startTranscription();
         return;
     }
@@ -482,7 +489,6 @@ void AudioToMidiProcessor::applyRestore (PendingRestore&& restore)
 
     tempo = restore.tempo;
     tempo.alignedBpm = tempo.bpm;
-    cleanup = restore.cleanup;
 
     preview.setMix (restore.mix);
     for (int layer = 0; layer < atm::Preview::kLayerSlots; ++layer)

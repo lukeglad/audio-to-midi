@@ -7,9 +7,9 @@
 /**
     The "?" quick guide: EQ's guide panel (same metrics, pinned title and
     link, scrolling sections, click outside to close), drawn as liquid glass
-    over a blurred, dimmed snapshot of the plugin (user's pick 2026-10-15,
-    mockups/guide.html). It explains only what looking won't teach, carries
-    the model's licence condition in one line, and ends with the credits.
+    over a blurred, dimmed snapshot of the plugin. It explains only what
+    looking won't teach, carries the model's licence conditions in two short
+    lines, and ends with the credits.
 
     Lives on top of the editor's content, covering it. open() takes the
     snapshot of the components behind, so the glass has something to bend.

@@ -5,7 +5,7 @@
 
 //==============================================================================
 /**
-    The plugin's menus as liquid glass (user's request 2026-10-15): the model
+    The plugin's menus as liquid glass, to match everything else: the model
     menu, the quantize grid and the chips' right-click menus. A system popup
     is its own window and can't see the plugin behind it, so this draws the
     menu inside the editor instead: an invisible layer over the whole content
@@ -40,11 +40,7 @@ public:
         the anchor's. `onResult` gets the chosen id, or 0 when dismissed. */
     void showBelow (juce::Component& anchor, Items, std::function<void (int)> onResult, bool alignRight = false);
 
-    /** At a point in `from` (a right-click). */
-    void showAt (juce::Component& from, juce::Point<int>, Items, std::function<void (int)> onResult);
-
     void dismiss();
-    bool isShowing() const noexcept { return isVisible(); }
 
     const juce::Image& getGlassBackdrop() override { return backdrop; }
 
@@ -64,7 +60,7 @@ private:
         int hovered = -1;
     };
 
-    void open (juce::Rectangle<int> anchorHere, bool below, bool alignRight, Items, std::function<void (int)>);
+    void open (juce::Rectangle<int> anchorHere, bool alignRight, Items, std::function<void (int)>);
     void finish (int result);
     void takeSnapshot();
     juce::Rectangle<int> rowBounds (int index) const;
@@ -75,7 +71,7 @@ private:
     std::function<void (int)> callback;
     juce::Image backdrop;
     juce::Rectangle<int> anchor;
-    bool placeBelow = true, alignToRight = false;
+    bool alignToRight = false;
     Panel panel { *this };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GlassMenu)
