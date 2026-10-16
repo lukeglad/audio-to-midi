@@ -14,8 +14,9 @@ struct tsf;
 
 namespace atm
 {
-    /** ~/Library/Application Support/AudioFlower/soundfonts/GeneralUser-GS.sf2
-        (shared by any AudioFlower plugin; see external/GeneralUser-GS). */
+    /** Application Support/AudioFlower/soundfonts/GeneralUser-GS.sf2: the
+        installer's copy in /Library when it's there, else build.sh's in
+        ~/Library (shared by any AudioFlower plugin; see external/GeneralUser-GS). */
     juce::File soundFontFile();
 
     //==========================================================================

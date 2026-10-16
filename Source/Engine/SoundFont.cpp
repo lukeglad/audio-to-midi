@@ -29,8 +29,18 @@ namespace
 
 juce::File soundFontFile()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("Application Support/AudioFlower/soundfonts/GeneralUser-GS.sf2");
+    // The installer puts the bank in the machine-wide folder (user decision
+    // 2026-10-15: bundled, not downloaded); build.sh fetches it into the
+    // user's own folder on a development machine. The installer's copy wins.
+    const auto inFolder = [] (juce::File::SpecialLocationType where)
+    {
+        return juce::File::getSpecialLocation (where)
+                   .getChildFile ("Application Support/AudioFlower/soundfonts/GeneralUser-GS.sf2");
+    };
+
+    const auto installed = inFolder (juce::File::commonApplicationDataDirectory);   // /Library
+    const auto fetched   = inFolder (juce::File::userApplicationDataDirectory);     // ~/Library
+    return installed.existsAsFile() || ! fetched.existsAsFile() ? installed : fetched;
 }
 
 //==============================================================================
